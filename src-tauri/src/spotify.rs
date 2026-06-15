@@ -442,6 +442,39 @@ pub struct ReplicaResult {
     tracks: Vec<ReplicaTrack>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaylistPreviewResult {
+    playlist: String,
+    total: usize,
+    tracks: Vec<Track>,
+}
+
+#[tauri::command]
+pub async fn spotify_playlist_preview(
+    catalog: tauri::State<'_, Catalog>,
+    playlist_url: String,
+) -> Result<PlaylistPreviewResult, String> {
+    let id = parse_playlist_id(&playlist_url).ok_or("That doesn't look like a Spotify playlist link.")?;
+    let client = http()?;
+
+    // Prefer the authenticated API (richer metadata), but still support public
+    // playlists without login via embed scraping.
+    let (playlist, tracks) = match ensure_access(&catalog).await {
+        Ok(access) => match fetch_playlist(&client, &access, &id).await {
+            Ok(result) => result,
+            Err(_) => fetch_playlist_embed(&client, &id).await?,
+        },
+        Err(_) => fetch_playlist_embed(&client, &id).await?,
+    };
+
+    let total = tracks.len();
+    if total == 0 {
+        return Err("No tracks found in that playlist.".to_string());
+    }
+    Ok(PlaylistPreviewResult { playlist, total, tracks })
+}
+
 const MAX_TRACKS: usize = 50;
 
 #[tauri::command]
@@ -692,6 +725,191 @@ pub async fn spotify_album_art(
     albums: Vec<AlbumQuery>,
 ) -> Result<Vec<AlbumArt>, String> {
     album_art_batch(&catalog, albums).await
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SpotifyArtist {
+    pub id: String,
+    pub name: String,
+    pub image: Option<String>,
+    pub url: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SpotifyAlbum {
+    pub id: String,
+    pub name: String,
+    pub artist: String,
+    pub image: Option<String>,
+    pub url: String,
+    pub year: Option<i32>,
+    pub track_count: i32,
+}
+
+#[derive(Deserialize)]
+struct SpotifyArtistSearchResp {
+    artists: SpotifyArtistItems,
+}
+
+#[derive(Deserialize)]
+struct SpotifyArtistItems {
+    #[serde(default)]
+    items: Vec<SpotifyArtistHit>,
+}
+
+#[derive(Deserialize)]
+struct SpotifyArtistHit {
+    id: String,
+    name: String,
+    #[serde(default)]
+    images: Vec<ImageObj>,
+    #[serde(default)]
+    external_urls: Option<ExtUrls>,
+}
+
+#[derive(Deserialize)]
+struct SpotifyArtistAlbumsResp {
+    #[serde(default)]
+    items: Vec<SpotifyAlbumHit>,
+    next: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SpotifyAlbumHit {
+    id: String,
+    name: String,
+    #[serde(default)]
+    images: Vec<ImageObj>,
+    #[serde(default)]
+    artists: Vec<NameObj>,
+    #[serde(default)]
+    release_date: String,
+    #[serde(default)]
+    total_tracks: i32,
+    #[serde(default)]
+    external_urls: Option<ExtUrls>,
+}
+
+async fn spotify_app_access(catalog: &Catalog) -> Result<(reqwest::Client, String), String> {
+    let id = setting(catalog, "spotify_client_id").ok_or("Add your Spotify Client ID in Settings first.")?;
+    let secret = setting(catalog, "spotify_client_secret").ok_or("Add your Spotify Client Secret in Settings first.")?;
+    let client = http()?;
+    let token = app_token(&client, &id, &secret).await?;
+    Ok((client, token))
+}
+
+fn spotify_album_year(release_date: &str) -> Option<i32> {
+    release_date.split('-').next()?.parse::<i32>().ok()
+}
+
+#[tauri::command]
+pub async fn spotify_search_artists(
+    catalog: tauri::State<'_, Catalog>,
+    query: String,
+) -> Result<Vec<SpotifyArtist>, String> {
+    let q = query.trim();
+    if q.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let (client, token) = spotify_app_access(&catalog).await?;
+    let resp: SpotifyArtistSearchResp = client
+        .get("https://api.spotify.com/v1/search")
+        .bearer_auth(&token)
+        .query(&[("q", q), ("type", "artist"), ("limit", "8")])
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| format!("Spotify artist search failed: {e}"))?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(resp
+        .artists
+        .items
+        .into_iter()
+        .map(|artist| SpotifyArtist {
+            url: artist
+                .external_urls
+                .and_then(|urls| urls.spotify)
+                .unwrap_or_else(|| format!("https://open.spotify.com/artist/{}", artist.id)),
+            image: artist.images.into_iter().next().map(|image| image.url),
+            id: artist.id,
+            name: artist.name,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn spotify_artist_albums(
+    catalog: tauri::State<'_, Catalog>,
+    artist_id: String,
+) -> Result<Vec<SpotifyAlbum>, String> {
+    let artist_id = artist_id.trim();
+    if artist_id.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let (client, token) = spotify_app_access(&catalog).await?;
+    let mut url = format!(
+        "https://api.spotify.com/v1/artists/{artist_id}/albums?include_groups=album,single&limit=50"
+    );
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+
+    loop {
+        let page: SpotifyArtistAlbumsResp = client
+            .get(&url)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| format!("Spotify album lookup failed: {e}"))?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        for album in page.items {
+            let year = spotify_album_year(&album.release_date);
+            let dedupe_key = format!(
+                "{}:{}",
+                album.name.trim().to_lowercase(),
+                year.map(|value| value.to_string()).unwrap_or_default()
+            );
+            if !seen.insert(dedupe_key) {
+                continue;
+            }
+            out.push(SpotifyAlbum {
+                url: album
+                    .external_urls
+                    .and_then(|urls| urls.spotify)
+                    .unwrap_or_else(|| format!("https://open.spotify.com/album/{}", album.id)),
+                image: album.images.into_iter().next().map(|image| image.url),
+                artist: album
+                    .artists
+                    .first()
+                    .map(|artist| artist.name.clone())
+                    .unwrap_or_default(),
+                year,
+                track_count: album.total_tracks,
+                id: album.id,
+                name: album.name,
+            });
+        }
+
+        match page.next {
+            Some(next) => url = next,
+            None => break,
+        }
+    }
+
+    out.sort_by(|a, b| b.year.cmp(&a.year).then_with(|| a.name.cmp(&b.name)));
+    Ok(out)
 }
 
 fn setting(catalog: &Catalog, key: &str) -> Option<String> {

@@ -1,35 +1,33 @@
 name: Release
 
-# Build every desktop bundle on a version tag and attach it to the GitHub
-# Release that mattssoftware.com's download buttons resolve. macOS is now
-# built, Developer-ID-signed, and Apple-notarized ENTIRELY IN CI (the `macos`
-# job) — modeled on the proven Blip release workflow + ghosty's own `make`
-# flow — so cutting a release no longer needs `make` on the maintainer's Mac.
-# Windows + Linux build via tauri-action on their native runners.
+# Build the Windows + Linux desktop bundles on a version tag and attach them to
+# the GitHub Release that mattssoftware.com's download buttons resolve. The
+# macOS build is produced LOCALLY by the maintainer (`make deploy` on an Apple
+# Silicon Mac: Developer-ID-signed, Apple-notarized, OTA-signed) — the same
+# split Libre.academy uses, because codesign/notarize is slow + flaky on hosted
+# macOS runners. The `macos` job below is kept but DISABLED for reference.
+#
+# OTA auto-update: createUpdaterArtifacts is on in tauri.conf.json, so every
+# bundle is paired with a minisign `.sig`. CI signs the Windows/Linux artifacts
+# with TAURI_SIGNING_PRIVATE_KEY, and the `manifest` job assembles latest.json
+# from the release's assets; `make deploy` later merges the macOS platform in
+# (the manifest builder merges, so either order converges). The updater endpoint
+# (tauri.conf.json plugins.updater) resolves to the release's latest.json.
 #
 # The @mattmattmattmatt/base "file:../../Libs/base" dependency is materialized
 # from the sibling InfamousVague/base repo before `npm ci` (same dance Libre +
 # Blip use), so the relative path package.json expects resolves on every runner.
 #
 # Trigger:
-#   - push a tag like v0.1.0  →  builds macOS + Windows + Linux and uploads
-#                                them to the release named after the tag.
-#   - workflow_dispatch       →  smoke-builds Windows + Linux (artifacts on the
-#                                run). The macOS job is tag-only (it needs the
-#                                release to upload the signed DMG to).
+#   - push a tag like v0.1.1  →  builds Windows + Linux, uploads them + their
+#                                signed updater artifacts, then writes latest.json.
+#   - workflow_dispatch       →  smoke-builds Windows + Linux (artifacts on the run).
 #
-# Required repo secrets for the signed macOS build — set these on
-# InfamousVague/TheBlackPearl (mirror the Blip repo's values). ghosty has NO
-# OTA updater, so the TAURI_SIGNING_* keys Blip/Libre use are NOT needed here:
-#   APPLE_CERTIFICATE            base64 of the Developer ID Application .p12
-#   APPLE_CERTIFICATE_PASSWORD   the .p12 export password
-#   APPLE_SIGNING_IDENTITY       "Developer ID Application: Matt Wisniewski (F6ZAL7ANAD)"
-#   APPLE_ID                     Apple ID email
-#   APPLE_PASSWORD               app-specific password for that Apple ID
-#   APPLE_TEAM_ID                F6ZAL7ANAD
-#
-# Until those are set the `macos` job fails fast with a clear message; the
-# Windows + Linux builds still run and upload.
+# Required repo secrets:
+#   TAURI_SIGNING_PRIVATE_KEY           minisign private key (contents of
+#                                       ~/.tauri/blackpearl-updater.key)
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password (empty for this key)
+# (The APPLE_* secrets are only used by the disabled in-CI macOS job.)
 
 on:
   push:
@@ -45,10 +43,10 @@ concurrency:
 
 jobs:
   # Windows + Linux on their native runners. tauri-action creates the release
-  # (on tag) and uploads the bundles to it. Linux ships .AppImage + .deb + .rpm
-  # (ghosty's AppImage builds cleanly on the runners — the APPIMAGE_EXTRACT_AND_RUN
-  # / NO_STRIP env below are the standard FUSE-less CI workaround). AppImage is
-  # the portable, install-free download; .deb/.rpm cover package-manager installs.
+  # (on tag) and uploads the bundles + their .sig updater artifacts to it. Linux
+  # ships .AppImage + .deb + .rpm (the APPIMAGE_EXTRACT_AND_RUN / NO_STRIP env is
+  # the standard FUSE-less CI workaround). AppImage is the OTA-capable Linux
+  # format; .deb/.rpm cover package-manager installs.
   build:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
@@ -116,6 +114,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Sign the updater artifacts so OTA clients can verify them against the
+          # pubkey in tauri.conf.json. The key has no password (empty secret).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # AppImage tooling (linuxdeploy) is itself an AppImage; ubuntu runners
           # lack libfuse2, so extract-and-run instead of FUSE-mounting. NO_STRIP
           # avoids a linuxdeploy strip failure. Both are no-ops on Windows.
@@ -127,18 +129,46 @@ jobs:
           releaseBody: "Desktop builds for macOS, Windows, and Linux."
           releaseDraft: false
           prerelease: false
+          # Windows updater points at the NSIS -setup.exe (silent background
+          # install), not the .msi (which needs UAC elevation).
+          updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
 
-  # macOS: Developer-ID-signed + Apple-notarized universal DMG, uploaded to the
-  # tag's release. Mirrors the working Blip pattern and ghosty's `make` flow:
-  # `tauri build` signs the .app with hardened runtime + Entitlements.plist
-  # (both already wired in tauri.conf.json), then notarytool + stapler. Tag-only;
-  # `needs: build` so the release already exists (created by the build job)
-  # before we upload the DMG into it.
+  # Assemble the unified OTA feed (latest.json) from the release's signed
+  # updater assets. tauri-action writes a PER-PLATFORM latest.json that the
+  # matrix would clobber to one platform, so this rebuilds it from every
+  # uploaded .sig and MERGES with any existing manifest — so the maintainer's
+  # local `make deploy` (macOS) and this CI run (Windows/Linux) don't wipe each
+  # other regardless of order.
+  manifest:
+    name: Assemble latest.json (OTA feed)
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build + upload the updater manifest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/build-updater-manifest.mjs "${{ github.ref_name }}"
+
+  # macOS in CI — DISABLED (`if: ${{ false }}`). Mac builds are produced locally
+  # via `make deploy` (Developer-ID-signed + Apple-notarized + OTA-signed),
+  # mirroring Libre.academy, because hosted macOS runners are slow/flaky for
+  # codesign + notarize. Kept here for reference / a future re-enable. To turn it
+  # back on, flip the `if` to `github.ref_type == 'tag'` and add the OTA signing
+  # env (TAURI_SIGNING_PRIVATE_KEY{,_PASSWORD}) + the re-tar/re-sign of the
+  # updater tarball that scripts/mac-ota.sh does, or it will ship an unsigned
+  # OTA bundle.
   macos:
     name: macOS (signed + notarized)
     needs: build
-    if: github.ref_type == 'tag'
+    if: ${{ false }}
     runs-on: macos-14
     timeout-minutes: 90 # fail fast instead of burning the 6h cap if codesign hangs
     permissions:
@@ -202,10 +232,12 @@ jobs:
 
       # `tauri build` codesigns the .app with the Developer ID identity from
       # tauri.conf.json (hardened runtime + Entitlements.plist) and produces the
-      # universal .dmg.
+      # universal .dmg + the signed updater tarball.
       - name: Build signed universal app + DMG
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri build -- --target universal-apple-darwin --bundles app,dmg
 
       - name: Notarize + staple

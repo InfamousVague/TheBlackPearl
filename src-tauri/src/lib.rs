@@ -13,20 +13,34 @@ pub mod posters;
 mod spotify;
 pub mod tvmaze;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use axum::{
+    extract::{Path as AxumPath, Query, State as AxumState},
+    http::{HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
 use catalog::{Catalog, CatalogItem, Source};
 use engine::{DownloadStats, Engine, MediaInfo};
+use rand::RngCore;
 use serde::Serialize;
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use sha2::{Digest, Sha256};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 /// A current Safari UA so Cloudflare-protected sites serve the normal page in the
 /// embedded browser (and so any cf_clearance cookie stays valid for this engine).
 const BROWSER_UA: &str =
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15";
 const VERIFY_LABEL: &str = "ghosty-verify";
+const SPOTIFLAC_OUTPUT_EVENT: &str = "spotiflac://output";
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -80,6 +94,13 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+fn now_s() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 // ---- streaming engine commands ----
 
 #[tauri::command]
@@ -109,6 +130,16 @@ async fn list_downloads(engine: tauri::State<'_, Engine>) -> Result<Vec<Download
 #[tauri::command]
 async fn media_info(engine: tauri::State<'_, Engine>, id: String) -> Result<MediaInfo, String> {
     engine.media_info(&id).await.map_err(|e| format!("{e:#}"))
+}
+
+/// Subtitle tracks (sidecar files + embedded streams) for a local video, by its relative
+/// path under the download folder. Served as WebVTT for the player's <track> elements.
+#[tauri::command]
+async fn list_subtitles(
+    engine: tauri::State<'_, Engine>,
+    rel: String,
+) -> Result<Vec<engine::SubTrack>, String> {
+    Ok(engine.list_subtitles(&rel).await)
 }
 
 #[tauri::command]
@@ -203,10 +234,19 @@ async fn search_sources(
         .filter(|s| s.enabled)
         .collect();
     let now = now_ms();
+    // Query every source concurrently instead of one-after-another — total time
+    // becomes the slowest single source, not the sum of all of them.
+    let mut set = tokio::task::JoinSet::new();
+    for s in sources {
+        let (kind, url, name, q) = (s.kind, s.url, s.name, q.clone());
+        set.spawn(async move {
+            indexer::search_source(&kind, &url, &q, &name, now).await.unwrap_or_default()
+        });
+    }
     let mut seen = HashSet::new();
     let mut merged: Vec<CatalogItem> = Vec::new();
-    for s in &sources {
-        if let Ok(items) = indexer::search_source(&s.kind, &s.url, &q, &s.name, now).await {
+    while let Some(res) = set.join_next().await {
+        if let Ok(items) = res {
             for it in items {
                 if seen.insert(it.id.clone()) {
                     merged.push(it);
@@ -311,8 +351,1620 @@ fn clear_catalog(catalog: tauri::State<'_, Catalog>) -> Result<usize, String> {
 }
 
 #[tauri::command]
+fn tidal_auth_status(catalog: tauri::State<'_, Catalog>) -> Result<TidalAuthStatus, String> {
+    tidal_auth_status_inner(catalog.inner())
+}
+
+#[tauri::command]
+fn tidal_save_credentials(
+    catalog: tauri::State<'_, Catalog>,
+    client_id: String,
+    client_secret: String,
+    refresh_token: Option<String>,
+) -> Result<TidalAuthStatus, String> {
+    let mut client_id = client_id.trim().to_string();
+    let mut client_secret = client_secret.trim().to_string();
+    if client_id.is_empty() || client_secret.is_empty() {
+        if let Ok((saved_id, saved_secret)) = tidal_credentials_from_keychain() {
+            if client_id.is_empty() {
+                client_id = saved_id;
+            }
+            if client_secret.is_empty() {
+                client_secret = saved_secret;
+            }
+        }
+    }
+    if client_id.is_empty() || client_secret.is_empty() {
+        return Err("Client ID and Client Secret are required.".to_string());
+    }
+    keychain_set(TIDAL_CLIENT_ID_ACCOUNT, &client_id)?;
+    keychain_set(TIDAL_CLIENT_SECRET_ACCOUNT, &client_secret)?;
+    if let Some(refresh_token) = refresh_token.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        keychain_set(TIDAL_REFRESH_TOKEN_ACCOUNT, &refresh_token)?;
+    }
+    let _ = keychain_delete(TIDAL_ACCESS_TOKEN_ACCOUNT);
+    let _ = catalog.set_setting("tidal_access_token_expires_at", "");
+    tidal_auth_status_inner(catalog.inner())
+}
+
+#[tauri::command]
+fn tidal_clear_credentials(catalog: tauri::State<'_, Catalog>) -> Result<TidalAuthStatus, String> {
+    let _ = keychain_delete(TIDAL_CLIENT_ID_ACCOUNT);
+    let _ = keychain_delete(TIDAL_CLIENT_SECRET_ACCOUNT);
+    let _ = keychain_delete(TIDAL_REFRESH_TOKEN_ACCOUNT);
+    let _ = keychain_delete(TIDAL_ACCESS_TOKEN_ACCOUNT);
+    let _ = catalog.set_setting("tidal_access_token_expires_at", "");
+    tidal_auth_status_inner(catalog.inner())
+}
+
+#[tauri::command]
+async fn tidal_test_auth(catalog: tauri::State<'_, Catalog>) -> Result<TidalAuthResult, String> {
+    let (client_id, client_secret) = tidal_credentials_from_keychain()?;
+    let maybe_refresh = tidal_refresh_token_from_keychain()?;
+    let (token, auth_mode) = match maybe_refresh {
+        Some(refresh_token) => {
+            let token = tidal_exchange_refresh_token(&client_id, &client_secret, &refresh_token).await?;
+            (token, "refresh_token")
+        }
+        None => {
+            let token = tidal_exchange_client_credentials(&client_id, &client_secret).await?;
+            (token, "client_credentials")
+        }
+    };
+    store_tidal_access_token(catalog.inner(), &token)?;
+
+    Ok(TidalAuthResult {
+        token_type: token.token_type,
+        expires_in: token.expires_in,
+        access_token_expires_at: token.access_token_expires_at,
+        auth_mode: auth_mode.to_string(),
+    })
+}
+
+#[tauri::command]
+async fn tidal_authorize_login(
+    app: tauri::AppHandle,
+    catalog: tauri::State<'_, Catalog>,
+    redirect_uri: Option<String>,
+) -> Result<TidalAuthResult, String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let (client_id, client_secret) = tidal_credentials_from_keychain()?;
+    let redirect_uri = redirect_uri
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| catalog.get_setting("tidal_oauth_redirect_uri").filter(|s| !s.trim().is_empty()))
+        .unwrap_or_else(|| TIDAL_OAUTH_DEFAULT_REDIRECT_URI.to_string());
+
+    let redirect = tauri::Url::parse(&redirect_uri)
+        .map_err(|e| format!("Invalid TIDAL OAuth redirect URI: {e}"))?;
+    if redirect.scheme() != "http" {
+        return Err(
+            "TIDAL OAuth redirect URI must use http:// and point to localhost (for desktop callback capture)."
+                .to_string(),
+        );
+    }
+    let host = redirect
+        .host_str()
+        .ok_or_else(|| "TIDAL OAuth redirect URI must include a host, e.g. 127.0.0.1.".to_string())?;
+    if host != "127.0.0.1" && host != "localhost" {
+        return Err("TIDAL OAuth redirect URI host must be localhost or 127.0.0.1.".to_string());
+    }
+    let port = redirect.port().ok_or_else(|| {
+        "TIDAL OAuth redirect URI must include an explicit port, e.g. http://127.0.0.1:46171/tidal/callback"
+            .to_string()
+    })?;
+    let path = if redirect.path().is_empty() {
+        "/".to_string()
+    } else {
+        redirect.path().to_string()
+    };
+
+    let bind_addr: SocketAddr = format!("127.0.0.1:{port}")
+        .parse()
+        .map_err(|e| format!("Invalid localhost callback port: {e}"))?;
+    let state = format!("ghosty-{}-{}", now_ms(), std::process::id());
+    let code_verifier = tidal_pkce_code_verifier();
+    let code_challenge = tidal_pkce_code_challenge(&code_verifier);
+
+    let callback_task = tokio::spawn(wait_for_tidal_oauth_code(bind_addr, path, state.clone()));
+
+    let mut auth_url = tauri::Url::parse(TIDAL_OAUTH_AUTHORIZE_URL).map_err(|e| e.to_string())?;
+    {
+        let mut query = auth_url.query_pairs_mut();
+        query.append_pair("response_type", "code");
+        query.append_pair("client_id", &client_id);
+        query.append_pair("redirect_uri", redirect.as_str());
+        query.append_pair("scope", TIDAL_OAUTH_SCOPE);
+        query.append_pair("state", &state);
+        query.append_pair("code_challenge", &code_challenge);
+        query.append_pair("code_challenge_method", "S256");
+    }
+
+    if let Err(err) = app.opener().open_url(auth_url.to_string(), None::<&str>) {
+        callback_task.abort();
+        return Err(format!("Couldn't open browser for TIDAL login: {err}"));
+    }
+
+    let code = match callback_task.await {
+        Ok(result) => result?,
+        Err(err) => {
+            return Err(format!(
+                "TIDAL OAuth callback listener failed to run: {err}. Make sure nothing is already using port {port}."
+            ));
+        }
+    };
+
+    let token = tidal_exchange_authorization_code(
+        &client_id,
+        &client_secret,
+        &code,
+        &code_verifier,
+        redirect.as_str(),
+    )
+    .await
+    .map_err(|err| {
+        let lower = err.to_ascii_lowercase();
+        if lower.contains("1002") || lower.contains("forbidden") || lower.contains("permission") {
+            format!("{err}\n{TIDAL_OAUTH_FALLBACK_HINT}")
+        } else {
+            err
+        }
+    })?;
+    if token
+        .refresh_token
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .is_none()
+    {
+        return Err(
+            "TIDAL login succeeded but no refresh token was returned. Verify your app allows Authorization Code flow and offline account access."
+                .to_string(),
+        );
+    }
+    store_tidal_access_token(catalog.inner(), &token)?;
+    let _ = catalog.set_setting("tidal_oauth_redirect_uri", redirect.as_str());
+
+    Ok(TidalAuthResult {
+        token_type: token.token_type,
+        expires_in: token.expires_in,
+        access_token_expires_at: token.access_token_expires_at,
+        auth_mode: "authorization_code".to_string(),
+    })
+}
+
+#[tauri::command]
 fn app_info(info: tauri::State<'_, AppInfo>) -> AppInfo {
     info.inner().clone()
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct MusicSpotiFlacStatus {
+    available: bool,
+    command: Option<String>,
+    output_dir: String,
+    hint: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct MusicSpotiFlacResult {
+    command: String,
+    output_dir: String,
+    stdout: String,
+    stderr: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct MusicSpotiFlacInstallResult {
+    command: String,
+    resolved_command: Option<String>,
+    stdout: String,
+    stderr: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct MusicSpotiFlacOutput {
+    stream: String,
+    line: String,
+    completed_files: Option<usize>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TidalAuthStatus {
+    has_client_id: bool,
+    has_client_secret: bool,
+    has_refresh_token: bool,
+    has_access_token: bool,
+    access_token_expires_at: Option<i64>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TidalAuthResult {
+    token_type: String,
+    expires_in: i64,
+    access_token_expires_at: i64,
+    auth_mode: String,
+}
+
+struct TidalAccessToken {
+    access_token: String,
+    token_type: String,
+    expires_in: i64,
+    access_token_expires_at: i64,
+    refresh_token: Option<String>,
+}
+
+const TIDAL_KEYCHAIN_SERVICE: &str = "com.ghosty.tidal";
+const TIDAL_CLIENT_ID_ACCOUNT: &str = "client_id";
+const TIDAL_CLIENT_SECRET_ACCOUNT: &str = "client_secret";
+const TIDAL_REFRESH_TOKEN_ACCOUNT: &str = "refresh_token";
+const TIDAL_ACCESS_TOKEN_ACCOUNT: &str = "access_token";
+const TIDAL_OAUTH_SCOPE: &str = "r_usr";
+const TIDAL_OAUTH_AUTHORIZE_URL: &str = "https://login.tidal.com/authorize";
+const TIDAL_OAUTH_TOKEN_URL: &str = "https://auth.tidal.com/v1/oauth2/token";
+const TIDAL_OAUTH_DEFAULT_REDIRECT_URI: &str = "http://127.0.0.1:46171/tidal/callback";
+const TIDAL_OAUTH_TIMEOUT_SECS: u64 = 600;
+const TIDAL_OAUTH_FALLBACK_HINT: &str =
+    "If TIDAL keeps showing error 1002/permission issues, use a custom HiFi API URL in Settings (SpotiFLAC-style flow) instead of direct TIDAL OAuth.";
+const TIDAL_OAUTH_REDIRECT_HINT: &str =
+    "Verify the redirect URI in TIDAL developer settings exactly matches Ghosty (scheme, host, port, path).";
+
+struct SpotiFlacCmd {
+    program: PathBuf,
+    fixed_args: Vec<String>,
+}
+
+#[derive(Clone)]
+struct TidalBridgeState {
+    client: reqwest::Client,
+    client_id: String,
+    access_token: String,
+    base_url: String,
+    manifests: Arc<tokio::sync::Mutex<HashMap<String, Vec<u8>>>>,
+}
+
+struct TidalBridgeHandle {
+    url: String,
+    auth_mode: String,
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+#[derive(serde::Deserialize)]
+struct TidalBridgeRequest {
+    id: String,
+    quality: Option<String>,
+    endpoint: Option<String>,
+    formats: Option<Vec<String>>,
+}
+
+#[derive(serde::Deserialize)]
+struct TidalBridgeTrackQuery {
+    id: String,
+    quality: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct TidalBridgeError {
+    success: bool,
+    message: String,
+}
+
+fn music_output_dir(info: &AppInfo) -> PathBuf {
+    PathBuf::from(&info.download_dir).join("Music")
+}
+
+#[cfg(target_os = "macos")]
+fn keychain_set(account: &str, value: &str) -> Result<(), String> {
+    let out = std::process::Command::new("security")
+        .args([
+            "add-generic-password",
+            "-U",
+            "-s",
+            TIDAL_KEYCHAIN_SERVICE,
+            "-a",
+            account,
+            "-w",
+            value,
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn keychain_get(account: &str) -> Result<Option<String>, String> {
+    let out = std::process::Command::new("security")
+        .args([
+            "find-generic-password",
+            "-w",
+            "-s",
+            TIDAL_KEYCHAIN_SERVICE,
+            "-a",
+            account,
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(Some(String::from_utf8_lossy(&out.stdout).trim().to_string()))
+    } else {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if stderr.contains("could not be found") {
+            Ok(None)
+        } else {
+            Err(stderr.trim().to_string())
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn keychain_delete(account: &str) -> Result<(), String> {
+    let out = std::process::Command::new("security")
+        .args([
+            "delete-generic-password",
+            "-s",
+            TIDAL_KEYCHAIN_SERVICE,
+            "-a",
+            account,
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() || String::from_utf8_lossy(&out.stderr).contains("could not be found") {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn keychain_set(_account: &str, _value: &str) -> Result<(), String> {
+    Err("Secure TIDAL credential storage is currently implemented for macOS only.".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn keychain_get(_account: &str) -> Result<Option<String>, String> {
+    Err("Secure TIDAL credential storage is currently implemented for macOS only.".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn keychain_delete(_account: &str) -> Result<(), String> {
+    Err("Secure TIDAL credential storage is currently implemented for macOS only.".to_string())
+}
+
+fn tidal_auth_status_inner(catalog: &Catalog) -> Result<TidalAuthStatus, String> {
+    let has_client_id = keychain_get(TIDAL_CLIENT_ID_ACCOUNT)?.map(|s| !s.trim().is_empty()).unwrap_or(false);
+    let has_client_secret = keychain_get(TIDAL_CLIENT_SECRET_ACCOUNT)?.map(|s| !s.trim().is_empty()).unwrap_or(false);
+    let has_refresh_token = keychain_get(TIDAL_REFRESH_TOKEN_ACCOUNT)?.map(|s| !s.trim().is_empty()).unwrap_or(false);
+    let has_access_token = keychain_get(TIDAL_ACCESS_TOKEN_ACCOUNT)?.map(|s| !s.trim().is_empty()).unwrap_or(false);
+    let access_token_expires_at = catalog
+        .get_setting("tidal_access_token_expires_at")
+        .and_then(|s| s.parse::<i64>().ok())
+        .filter(|v| *v > 0);
+    Ok(TidalAuthStatus {
+        has_client_id,
+        has_client_secret,
+        has_refresh_token,
+        has_access_token,
+        access_token_expires_at,
+    })
+}
+
+fn tidal_credentials_from_keychain() -> Result<(String, String), String> {
+    let client_id = keychain_get(TIDAL_CLIENT_ID_ACCOUNT)?
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| "Save a TIDAL Client ID first.".to_string())?;
+    let client_secret = keychain_get(TIDAL_CLIENT_SECRET_ACCOUNT)?
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| "Save a TIDAL Client Secret first.".to_string())?;
+    Ok((client_id, client_secret))
+}
+
+fn tidal_refresh_token_from_keychain() -> Result<Option<String>, String> {
+    Ok(keychain_get(TIDAL_REFRESH_TOKEN_ACCOUNT)?.filter(|s| !s.trim().is_empty()))
+}
+
+fn tidal_oauth_error_message(body: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct TidalOauthError {
+        #[serde(default)]
+        error: Option<String>,
+        #[serde(default)]
+        error_description: Option<String>,
+        #[serde(default)]
+        detail: Option<String>,
+        #[serde(default)]
+        title: Option<String>,
+    }
+
+    if let Ok(err) = serde_json::from_str::<TidalOauthError>(body) {
+        if let Some(message) = err.error_description.filter(|s| !s.trim().is_empty()) {
+            return message;
+        }
+        if let Some(message) = err.detail.filter(|s| !s.trim().is_empty()) {
+            return message;
+        }
+        if let Some(message) = err.title.filter(|s| !s.trim().is_empty()) {
+            return message;
+        }
+        if let Some(message) = err.error.filter(|s| !s.trim().is_empty()) {
+            return message;
+        }
+    }
+
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        "Unknown TIDAL OAuth error".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn tidal_pkce_code_verifier() -> String {
+    use base64::Engine;
+
+    let mut bytes = [0u8; 64];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+
+fn tidal_pkce_code_challenge(code_verifier: &str) -> String {
+    use base64::Engine;
+
+    let digest = Sha256::digest(code_verifier.as_bytes());
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
+}
+
+async fn wait_for_tidal_oauth_code(
+    bind_addr: SocketAddr,
+    expected_path: String,
+    expected_state: String,
+) -> Result<String, String> {
+    let listener = tokio::net::TcpListener::bind(bind_addr)
+        .await
+        .map_err(|e| format!("Failed to listen for TIDAL OAuth callback on {bind_addr}: {e}"))?;
+
+    let (mut stream, _) = tokio::time::timeout(Duration::from_secs(TIDAL_OAUTH_TIMEOUT_SECS), listener.accept())
+        .await
+        .map_err(|_| {
+            format!(
+                "Timed out waiting for TIDAL login callback ({}s). Complete login in your browser and try again.\nIf your browser showed authorize 400/permission errors, your app may not be approved for this OAuth login path.\n{}\n{}",
+                TIDAL_OAUTH_TIMEOUT_SECS,
+                TIDAL_OAUTH_REDIRECT_HINT,
+                TIDAL_OAUTH_FALLBACK_HINT
+            )
+        })
+        .and_then(|result| result.map_err(|e| format!("Failed to accept TIDAL OAuth callback: {e}")))?;
+
+    let (status_line, html, code_result) = {
+        let mut reader = tokio::io::BufReader::new(&mut stream);
+        let mut request_line = String::new();
+        if reader
+            .read_line(&mut request_line)
+            .await
+            .map_err(|e| format!("Failed reading callback request: {e}"))?
+            == 0
+        {
+            return Err("TIDAL callback connection closed before sending data.".to_string());
+        }
+
+        loop {
+            let mut header_line = String::new();
+            let n = reader
+                .read_line(&mut header_line)
+                .await
+                .map_err(|e| format!("Failed reading callback headers: {e}"))?;
+            if n == 0 || header_line == "\r\n" || header_line == "\n" {
+                break;
+            }
+        }
+
+        let mut parts = request_line.split_whitespace();
+        let method = parts.next().unwrap_or("");
+        let target = parts.next().unwrap_or("");
+
+        if method != "GET" || target.is_empty() {
+            (
+                "400 Bad Request".to_string(),
+                "<html><body><h2>TIDAL login failed</h2><p>Ghosty received an invalid callback request.</p></body></html>"
+                    .to_string(),
+                Err("TIDAL callback request was malformed.".to_string()),
+            )
+        } else {
+            let callback_url = tauri::Url::parse(&format!("http://localhost{target}"))
+                .map_err(|e| format!("Failed to parse callback URL: {e}"));
+
+            match callback_url {
+                Err(err) => (
+                    "400 Bad Request".to_string(),
+                    "<html><body><h2>TIDAL login failed</h2><p>Ghosty could not parse the callback URL.</p></body></html>"
+                        .to_string(),
+                    Err(err),
+                ),
+                Ok(url) => {
+                    let params: HashMap<String, String> = url.query_pairs().into_owned().collect();
+                    if url.path() != expected_path {
+                        (
+                            "400 Bad Request".to_string(),
+                            "<html><body><h2>TIDAL login failed</h2><p>Callback path did not match your configured redirect URI.</p></body></html>"
+                                .to_string(),
+                            Err("TIDAL callback path mismatch. Ensure your app redirect URI exactly matches Ghosty's redirect URI."
+                                .to_string()),
+                        )
+                    } else if let Some(error) = params.get("error").map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                        let detail = params
+                            .get("error_description")
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or("");
+                        let message = if detail.is_empty() {
+                            format!("TIDAL authorization failed: {error}")
+                        } else {
+                            format!("TIDAL authorization failed: {error} ({detail})")
+                        };
+                        (
+                            "400 Bad Request".to_string(),
+                            "<html><body><h2>TIDAL login failed</h2><p>You denied access or TIDAL returned an authorization error.</p></body></html>"
+                                .to_string(),
+                            Err(message),
+                        )
+                    } else if params.get("state").map(String::as_str) != Some(expected_state.as_str()) {
+                        (
+                            "400 Bad Request".to_string(),
+                            "<html><body><h2>TIDAL login failed</h2><p>State mismatch detected. Return to Ghosty and retry.</p></body></html>"
+                                .to_string(),
+                            Err("TIDAL OAuth state mismatch. Please retry login.".to_string()),
+                        )
+                    } else if let Some(code) = params
+                        .get("code")
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                    {
+                        (
+                            "200 OK".to_string(),
+                            "<html><body><h2>TIDAL login complete</h2><p>You can close this browser tab and return to Ghosty.</p></body></html>"
+                                .to_string(),
+                            Ok(code),
+                        )
+                    } else {
+                        (
+                            "400 Bad Request".to_string(),
+                            "<html><body><h2>TIDAL login failed</h2><p>TIDAL did not return an authorization code.</p></body></html>"
+                                .to_string(),
+                            Err("TIDAL callback did not include an authorization code.".to_string()),
+                        )
+                    }
+                }
+            }
+        }
+    };
+
+    let response = format!(
+        "HTTP/1.1 {status_line}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{html}",
+        html.len()
+    );
+    let _ = stream.write_all(response.as_bytes()).await;
+
+    code_result
+}
+
+async fn tidal_exchange_authorization_code(
+    client_id: &str,
+    client_secret: &str,
+    code: &str,
+    code_verifier: &str,
+    redirect_uri: &str,
+) -> Result<TidalAccessToken, String> {
+    #[derive(serde::Deserialize)]
+    struct TokenResponse {
+        access_token: String,
+        token_type: String,
+        expires_in: i64,
+        #[serde(default)]
+        refresh_token: Option<String>,
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let res = client
+        .post(TIDAL_OAUTH_TOKEN_URL)
+        .basic_auth(client_id, Some(client_secret))
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("code_verifier", code_verifier),
+            ("redirect_uri", redirect_uri),
+            ("client_id", client_id),
+        ])
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = res.status();
+    if !status.is_success() {
+        let body = res.text().await.unwrap_or_default();
+        return Err(format!(
+            "TIDAL authorization-code exchange failed: {status} {}",
+            tidal_oauth_error_message(&body)
+        ));
+    }
+
+    let token: TokenResponse = res.json().await.map_err(|e| e.to_string())?;
+    Ok(TidalAccessToken {
+        access_token: token.access_token,
+        token_type: token.token_type,
+        expires_in: token.expires_in,
+        access_token_expires_at: now_s() + token.expires_in,
+        refresh_token: token.refresh_token,
+    })
+}
+
+async fn tidal_exchange_client_credentials(client_id: &str, client_secret: &str) -> Result<TidalAccessToken, String> {
+    use base64::Engine;
+
+    #[derive(serde::Deserialize)]
+    struct TokenResponse {
+        access_token: String,
+        token_type: String,
+        expires_in: i64,
+        #[serde(default)]
+        refresh_token: Option<String>,
+    }
+
+    let basic = base64::engine::general_purpose::STANDARD.encode(format!("{client_id}:{client_secret}"));
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let res = client
+        .post(TIDAL_OAUTH_TOKEN_URL)
+        .header(reqwest::header::AUTHORIZATION, format!("Basic {basic}"))
+        .header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body("grant_type=client_credentials")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = res.status();
+    if !status.is_success() {
+        let body = res.text().await.unwrap_or_default();
+        return Err(format!("TIDAL auth failed: {status} {}", body.trim()));
+    }
+
+    let token: TokenResponse = res.json().await.map_err(|e| e.to_string())?;
+    Ok(TidalAccessToken {
+        access_token: token.access_token,
+        token_type: token.token_type,
+        expires_in: token.expires_in,
+        access_token_expires_at: now_s() + token.expires_in,
+        refresh_token: token.refresh_token,
+    })
+}
+
+async fn tidal_exchange_refresh_token(
+    client_id: &str,
+    client_secret: &str,
+    refresh_token: &str,
+) -> Result<TidalAccessToken, String> {
+    use base64::Engine;
+
+    #[derive(serde::Deserialize)]
+    struct TokenResponse {
+        access_token: String,
+        token_type: String,
+        expires_in: i64,
+        #[serde(default)]
+        refresh_token: Option<String>,
+    }
+
+    let basic = base64::engine::general_purpose::STANDARD.encode(format!("{client_id}:{client_secret}"));
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let res = client
+        .post(TIDAL_OAUTH_TOKEN_URL)
+        .header(reqwest::header::AUTHORIZATION, format!("Basic {basic}"))
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+            ("client_id", client_id),
+        ])
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = res.status();
+    if !status.is_success() {
+        let body = res.text().await.unwrap_or_default();
+        return Err(format!("TIDAL refresh-token auth failed: {status} {}", body.trim()));
+    }
+
+    let token: TokenResponse = res.json().await.map_err(|e| e.to_string())?;
+    Ok(TidalAccessToken {
+        access_token: token.access_token,
+        token_type: token.token_type,
+        expires_in: token.expires_in,
+        access_token_expires_at: now_s() + token.expires_in,
+        refresh_token: token.refresh_token,
+    })
+}
+
+fn store_tidal_access_token(catalog: &Catalog, token: &TidalAccessToken) -> Result<(), String> {
+    keychain_set(TIDAL_ACCESS_TOKEN_ACCOUNT, &token.access_token)?;
+    if let Some(refresh_token) = token.refresh_token.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        keychain_set(TIDAL_REFRESH_TOKEN_ACCOUNT, refresh_token)?;
+    }
+    catalog
+        .set_setting("tidal_access_token_expires_at", &token.access_token_expires_at.to_string())
+        .map_err(|e| format!("{e:#}"))
+}
+
+async fn ensure_tidal_access_token(catalog: &Catalog) -> Result<(String, String, String), String> {
+    let (client_id, client_secret) = tidal_credentials_from_keychain()?;
+    let expires_at = catalog
+        .get_setting("tidal_access_token_expires_at")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
+    if expires_at > now_s() + 120 {
+        if let Some(access_token) = keychain_get(TIDAL_ACCESS_TOKEN_ACCOUNT)?.filter(|s| !s.trim().is_empty()) {
+            let auth_mode = if tidal_refresh_token_from_keychain()?.is_some() {
+                "refresh_token"
+            } else {
+                "client_credentials"
+            };
+            return Ok((client_id, access_token, auth_mode.to_string()));
+        }
+    }
+
+    if let Some(refresh_token) = tidal_refresh_token_from_keychain()? {
+        let token = tidal_exchange_refresh_token(&client_id, &client_secret, &refresh_token).await?;
+        store_tidal_access_token(catalog, &token)?;
+        return Ok((client_id, token.access_token, "refresh_token".to_string()));
+    }
+
+    let token = tidal_exchange_client_credentials(&client_id, &client_secret).await?;
+    store_tidal_access_token(catalog, &token)?;
+    Ok((client_id, token.access_token, "client_credentials".to_string()))
+}
+
+fn normalize_tidal_quality(value: &str) -> String {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "HIRES" | "HI_RES" | "MASTER" => "HI_RES_LOSSLESS".to_string(),
+        "FLAC" => "LOSSLESS".to_string(),
+        "DOLBY" | "ATMOS" | "DOLBY ATMOS" | "EAC3" | "EC3" | "EAC3_JOC" => "DOLBY_ATMOS".to_string(),
+        "LOW" | "HIGH" | "LOSSLESS" | "HI_RES_LOSSLESS" | "DOLBY_ATMOS" => value.trim().to_ascii_uppercase(),
+        _ => "LOSSLESS".to_string(),
+    }
+}
+
+fn tidal_error_is_missing_bearer(detail: &str) -> bool {
+    detail.to_ascii_lowercase().contains("bearer token is missing or empty")
+}
+
+fn tidal_missing_bearer_hint(api_mode: &str) -> &'static str {
+    match api_mode {
+        "custom" => {
+            "Hint: Your custom TIDAL API returned a missing bearer-token error. Ensure that API has a valid account token configured, or clear TIDAL API URL in Settings to use SpotiFLAC's built-in public mirror pool."
+        }
+        "spotiflac_public" => {
+            "Hint: SpotiFLAC's public TIDAL API pool returned a missing bearer-token error. Retry later, or set your own self-hosted hifi-api URL in Settings for more reliable access."
+        }
+        _ => "Hint: TIDAL playback needs an account refresh token. Open Settings -> TIDAL app auth and click Get refresh token.",
+    }
+}
+
+fn tidal_bridge_quality(req: &TidalBridgeRequest) -> String {
+    if req.endpoint.as_deref() == Some("manifests")
+        || req
+            .formats
+            .as_ref()
+            .is_some_and(|formats| formats.iter().any(|f| f.eq_ignore_ascii_case("EAC3_JOC")))
+    {
+        return "DOLBY_ATMOS".to_string();
+    }
+    normalize_tidal_quality(req.quality.as_deref().unwrap_or("LOSSLESS"))
+}
+
+async fn fetch_tidal_playback(
+    client: &reqwest::Client,
+    client_id: &str,
+    access_token: &str,
+    track_id: &str,
+    quality: &str,
+) -> Result<serde_json::Value, String> {
+    let candidates = [
+        format!("https://listen.tidal.com/v1/tracks/{track_id}/playbackinfopostpaywall/v4"),
+        format!("https://listen.tidal.com/v1/tracks/{track_id}/playbackinfopostpaywall/v1"),
+        format!("https://listen.tidal.com/v1/tracks/{track_id}/playbackinfopostpaywall"),
+        format!("https://api.tidal.com/v1/tracks/{track_id}/playbackinfopostpaywall"),
+    ];
+    let mut last_err = None;
+
+    for url in candidates {
+        let res = client
+            .get(&url)
+            .query(&[
+                ("audioquality", quality),
+                ("playbackmode", "STREAM"),
+                ("assetpresentation", "FULL"),
+                ("countryCode", "US"),
+                ("deviceType", "BROWSER"),
+            ])
+            .header(reqwest::header::AUTHORIZATION, format!("Bearer {access_token}"))
+            .header("X-Tidal-Token", client_id)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::USER_AGENT, BROWSER_UA)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let status = res.status();
+        let body = res.text().await.map_err(|e| e.to_string())?;
+        if !status.is_success() {
+            last_err = Some(format!("{status} {}", body.trim()));
+            continue;
+        }
+        let json = serde_json::from_str::<serde_json::Value>(&body).map_err(|e| e.to_string())?;
+        return Ok(json);
+    }
+
+    Err(format!(
+        "TIDAL playback lookup failed for track {track_id}. {}",
+        last_err.unwrap_or_else(|| "No TIDAL playback endpoint returned a response.".to_string())
+    ))
+}
+
+fn tidal_manifest_from_payload(payload: &serde_json::Value) -> Option<String> {
+    payload
+        .get("manifest")
+        .and_then(|v| v.as_str())
+        .or_else(|| payload.get("data").and_then(|v| v.get("manifest")).and_then(|v| v.as_str()))
+        .map(str::to_string)
+}
+
+fn tidal_asset_presentation(payload: &serde_json::Value) -> String {
+    payload
+        .get("assetPresentation")
+        .and_then(|v| v.as_str())
+        .or_else(|| payload.get("data").and_then(|v| v.get("assetPresentation")).and_then(|v| v.as_str()))
+        .unwrap_or("FULL")
+        .to_string()
+}
+
+async fn tidal_bridge_post(
+    AxumState(state): AxumState<TidalBridgeState>,
+    Json(req): Json<TidalBridgeRequest>,
+) -> Response {
+    let track_id = req.id.trim();
+    if track_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(TidalBridgeError {
+                success: false,
+                message: "Missing TIDAL track id.".to_string(),
+            }),
+        )
+            .into_response();
+    }
+
+    let quality = tidal_bridge_quality(&req);
+    let payload = match fetch_tidal_playback(&state.client, &state.client_id, &state.access_token, track_id, &quality).await {
+        Ok(payload) => payload,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(TidalBridgeError {
+                    success: false,
+                    message: err,
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let manifest = match tidal_manifest_from_payload(&payload) {
+        Some(manifest) => manifest,
+        None => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(TidalBridgeError {
+                    success: false,
+                    message: "TIDAL playback response did not include a manifest.".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    if quality == "DOLBY_ATMOS" {
+        use base64::Engine;
+
+        let bytes = match base64::engine::general_purpose::STANDARD.decode(manifest.as_bytes()) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    Json(TidalBridgeError {
+                        success: false,
+                        message: format!("TIDAL returned an invalid Dolby Atmos manifest: {err}"),
+                    }),
+                )
+                    .into_response();
+            }
+        };
+        let key = format!("{}-{}-{}", track_id, quality.to_ascii_lowercase(), now_ms());
+        {
+            let mut manifests = state.manifests.lock().await;
+            manifests.insert(key.clone(), bytes);
+            if manifests.len() > 24 {
+                let mut keys: Vec<String> = manifests.keys().cloned().collect();
+                keys.sort();
+                let drop_n = manifests.len().saturating_sub(24);
+                for old in keys.into_iter().take(drop_n) {
+                    manifests.remove(&old);
+                }
+            }
+        }
+        return Json(serde_json::json!({
+            "data": {
+                "data": {
+                    "attributes": {
+                        "formats": ["EAC3_JOC"],
+                        "uri": format!("{}/manifest/{}", state.base_url, key),
+                    }
+                }
+            }
+        }))
+        .into_response();
+    }
+
+    Json(serde_json::json!({
+        "manifest": manifest,
+        "data": {
+            "manifest": manifest,
+            "assetPresentation": tidal_asset_presentation(&payload),
+        }
+    }))
+    .into_response()
+}
+
+async fn tidal_bridge_track_get(
+    AxumState(state): AxumState<TidalBridgeState>,
+    Query(query): Query<TidalBridgeTrackQuery>,
+) -> Response {
+    tidal_bridge_post(
+        AxumState(state),
+        Json(TidalBridgeRequest {
+            id: query.id,
+            quality: query.quality,
+            endpoint: None,
+            formats: None,
+        }),
+    )
+    .await
+}
+
+async fn tidal_bridge_manifest(
+    AxumState(state): AxumState<TidalBridgeState>,
+    AxumPath(key): AxumPath<String>,
+) -> Response {
+    let bytes = {
+        let manifests = state.manifests.lock().await;
+        manifests.get(&key).cloned()
+    };
+    match bytes {
+        Some(bytes) => {
+            let mut res = bytes.into_response();
+            res.headers_mut().insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_static("application/dash+xml"));
+            res
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn start_tidal_bridge(catalog: &Catalog) -> Result<TidalBridgeHandle, String> {
+    let (client_id, access_token, auth_mode) = ensure_tidal_access_token(catalog).await?;
+    let mut access_token = access_token;
+    let mut auth_mode = auth_mode;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // Some TIDAL app-only tokens pass initial auth but fail playback calls with a
+    // bearer-token error. If we have a refresh token, retry once with account auth.
+    if let Err(err) = fetch_tidal_playback(&client, &client_id, &access_token, "441821360", "LOSSLESS").await {
+        if tidal_error_is_missing_bearer(&err) {
+            if let Some(refresh_token) = tidal_refresh_token_from_keychain()? {
+                let (_, client_secret) = tidal_credentials_from_keychain()?;
+                let token = tidal_exchange_refresh_token(&client_id, &client_secret, &refresh_token).await?;
+                store_tidal_access_token(catalog, &token)?;
+                access_token = token.access_token;
+                auth_mode = "refresh_token".to_string();
+            } else {
+                return Err(format!(
+                    "TIDAL rejected the current bearer token. {}",
+                    tidal_missing_bearer_hint("ghosty_bridge")
+                ));
+            }
+        }
+    }
+
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .map_err(|e| e.to_string())?;
+    let addr = listener.local_addr().map_err(|e| e.to_string())?;
+    let base_url = format!("http://{}", addr);
+    let state = TidalBridgeState {
+        client,
+        client_id,
+        access_token,
+        base_url: base_url.clone(),
+        manifests: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+    };
+    let router = Router::new()
+        .route("/", post(tidal_bridge_post))
+        .route("/track/", get(tidal_bridge_track_get))
+        .route("/track", get(tidal_bridge_track_get))
+        .route("/manifest/{key}", get(tidal_bridge_manifest))
+        .with_state(state);
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let task = tokio::spawn(async move {
+        let server = axum::serve(listener, router).with_graceful_shutdown(async move {
+            let _ = shutdown_rx.await;
+        });
+        let _ = server.await;
+    });
+
+    Ok(TidalBridgeHandle {
+        url: base_url,
+        auth_mode,
+        shutdown: Some(shutdown_tx),
+        task,
+    })
+}
+
+impl TidalBridgeHandle {
+    async fn shutdown(mut self) {
+        if let Some(tx) = self.shutdown.take() {
+            let _ = tx.send(());
+        }
+        let _ = self.task.await;
+    }
+}
+
+fn find_bin(name: &str) -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let home = PathBuf::from(home);
+        let mut extra = vec![home.join(".local/bin")];
+        if let Ok(lib_py) = std::fs::read_dir(home.join("Library/Python")) {
+            for dir in lib_py.flatten() {
+                let p = dir.path().join("bin");
+                if p.is_dir() {
+                    extra.push(p);
+                }
+            }
+        }
+        for dir in extra {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    for dir in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
+        let candidate = Path::new(dir).join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn resolve_spotiflac() -> Option<SpotiFlacCmd> {
+    find_bin("spotiflac").map(|program| SpotiFlacCmd {
+        program,
+        fixed_args: Vec::new(),
+    })
+}
+
+fn render_command(program: &Path, fixed_args: &[String], args: &[String]) -> String {
+    let mut parts = vec![program.display().to_string()];
+    parts.extend(fixed_args.iter().cloned());
+    parts.extend(args.iter().cloned());
+    parts
+        .into_iter()
+        .map(|part| {
+            if part.chars().any(char::is_whitespace) {
+                format!("\"{}\"", part.replace('"', "\\\""))
+            } else {
+                part
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn system_path_for_installs() -> std::ffi::OsString {
+    let mut parts: Vec<PathBuf> = std::env::var_os("PATH")
+        .as_deref()
+        .map(std::env::split_paths)
+        .into_iter()
+        .flatten()
+        .collect();
+    if let Ok(home) = std::env::var("HOME") {
+        let home = PathBuf::from(home);
+        parts.push(home.join(".local/bin"));
+        parts.push(PathBuf::from("/opt/homebrew/bin"));
+        parts.push(PathBuf::from("/usr/local/bin"));
+        parts.push(PathBuf::from("/usr/bin"));
+        if let Ok(lib_py) = std::fs::read_dir(home.join("Library/Python")) {
+            for dir in lib_py.flatten() {
+                let p = dir.path().join("bin");
+                if p.is_dir() {
+                    parts.push(p);
+                }
+            }
+        }
+    }
+    let mut uniq: Vec<PathBuf> = Vec::new();
+    for part in parts {
+        if !uniq.iter().any(|p| p == &part) {
+            uniq.push(part);
+        }
+    }
+    std::env::join_paths(uniq).unwrap_or_else(|_| std::env::var_os("PATH").unwrap_or_default())
+}
+
+fn preferred_python_for_install() -> Option<PathBuf> {
+    for candidate in ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/opt/homebrew/bin/python", "/usr/local/bin/python"] {
+        let path = PathBuf::from(candidate);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    find_bin("python3")
+        .filter(|p| p != Path::new("/usr/bin/python3"))
+        .or_else(|| find_bin("python").filter(|p| p != Path::new("/usr/bin/python")))
+        .or_else(|| find_bin("python3"))
+        .or_else(|| find_bin("python"))
+}
+
+fn install_attempts() -> Vec<(String, Vec<String>)> {
+    let mut cmds = Vec::new();
+    if let Some(pipx) = find_bin("pipx") {
+        cmds.push((
+            pipx.display().to_string(),
+            vec!["install".to_string(), "--force".to_string(), "SpotiFLAC".to_string()],
+        ));
+    }
+    if let Some(py) = preferred_python_for_install() {
+        cmds.push((
+            py.display().to_string(),
+            vec![
+                "-m".to_string(),
+                "pip".to_string(),
+                "install".to_string(),
+                "--user".to_string(),
+                "--upgrade".to_string(),
+                "SpotiFLAC".to_string(),
+            ],
+        ));
+    }
+    cmds
+}
+
+async fn run_install_capture(
+    program: String,
+    args: Vec<String>,
+    path: std::ffi::OsString,
+    max_lines: usize,
+) -> Result<(bool, String, String, String), String> {
+    let rendered = render_command(Path::new(&program), &[], &args);
+    let out = tokio::task::spawn_blocking(move || {
+        let mut command = std::process::Command::new(&program);
+        command.env("PATH", &path);
+        command.args(&args);
+        command.output()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+
+    let stdout = tail_lines(&String::from_utf8_lossy(&out.stdout), max_lines);
+    let stderr = tail_lines(&String::from_utf8_lossy(&out.stderr), max_lines);
+    Ok((out.status.success(), rendered, stdout, stderr))
+}
+
+fn tail_lines(s: &str, max: usize) -> String {
+    let lines: Vec<&str> = s.lines().collect();
+    let start = lines.len().saturating_sub(max);
+    lines[start..].join("\n").trim().to_string()
+}
+
+fn tail_vec_lines(lines: &[String], max: usize) -> String {
+    let start = lines.len().saturating_sub(max);
+    lines[start..].join("\n").trim().to_string()
+}
+
+async fn pump_spotiflac_output<R>(
+    app: tauri::AppHandle,
+    stream: &'static str,
+    reader: R,
+    lines: Arc<tokio::sync::Mutex<Vec<String>>>,
+) where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    let mut reader = tokio::io::BufReader::new(reader).lines();
+    while let Ok(Some(line)) = reader.next_line().await {
+        let line = line.trim_end().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        let _ = app.emit(
+            SPOTIFLAC_OUTPUT_EVENT,
+            MusicSpotiFlacOutput {
+                stream: stream.to_string(),
+                line: line.clone(),
+                completed_files: None,
+            },
+        );
+        let mut out = lines.lock().await;
+        out.push(line);
+        if out.len() > 240 {
+            let drop_n = out.len() - 240;
+            out.drain(0..drop_n);
+        }
+    }
+}
+
+fn current_music_file_set(root: &Path) -> HashSet<String> {
+    export::scan(root)
+        .into_iter()
+        .filter(|item| item.kind == "audio" && item.media_type == "music")
+        .map(|item| item.path)
+        .collect()
+}
+
+async fn emit_spotiflac_completed_files(
+    app: &tauri::AppHandle,
+    output_dir: &Path,
+    baseline: &HashSet<String>,
+) {
+    let count = current_music_file_set(output_dir)
+        .into_iter()
+        .filter(|path| !baseline.contains(path))
+        .count();
+    let _ = app.emit(
+        SPOTIFLAC_OUTPUT_EVENT,
+        MusicSpotiFlacOutput {
+            stream: "meta".to_string(),
+            line: String::new(),
+            completed_files: Some(count),
+        },
+    );
+}
+
+async fn watch_spotiflac_completed_files(
+    app: tauri::AppHandle,
+    output_dir: PathBuf,
+    baseline: HashSet<String>,
+    mut stop: tokio::sync::oneshot::Receiver<()>,
+) {
+    let mut interval = tokio::time::interval(Duration::from_millis(700));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut last_count = usize::MAX;
+    loop {
+        tokio::select! {
+            _ = &mut stop => {
+                emit_spotiflac_completed_files(&app, &output_dir, &baseline).await;
+                break;
+            }
+            _ = interval.tick() => {
+                let count = current_music_file_set(&output_dir)
+                    .into_iter()
+                    .filter(|path| !baseline.contains(path))
+                    .count();
+                if count != last_count {
+                    last_count = count;
+                    let _ = app.emit(
+                        SPOTIFLAC_OUTPUT_EVENT,
+                        MusicSpotiFlacOutput {
+                            stream: "meta".to_string(),
+                            line: String::new(),
+                            completed_files: Some(count),
+                        },
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn normalize_service(service: &str) -> String {
+    let value = service.trim().to_ascii_lowercase();
+    match value.as_str() {
+        "tidal" | "qobuz" | "deezer" | "amazon" | "apple" | "soundcloud" | "youtube" | "pandora" | "joox"
+        | "netease" | "migu" | "kuwo" => value,
+        _ => "youtube".to_string(),
+    }
+}
+
+#[tauri::command]
+fn music_spotiflac_status(info: tauri::State<'_, AppInfo>) -> MusicSpotiFlacStatus {
+    let output_dir = music_output_dir(info.inner()).display().to_string();
+    match resolve_spotiflac() {
+        Some(cmd) => MusicSpotiFlacStatus {
+            available: true,
+            command: Some(cmd.program.display().to_string()),
+            output_dir,
+            hint: None,
+        },
+        None => MusicSpotiFlacStatus {
+            available: false,
+            command: None,
+            output_dir,
+            hint: Some(
+                "Install SpotiFLAC so Ghosty can launch `spotiflac` (for example: `pipx install SpotiFLAC` or `python3 -m pip install --user SpotiFLAC`)."
+                    .to_string(),
+            ),
+        },
+    }
+}
+
+#[tauri::command]
+async fn music_spotiflac_download(
+    app: tauri::AppHandle,
+    info: tauri::State<'_, AppInfo>,
+    catalog: tauri::State<'_, Catalog>,
+    cache: tauri::State<'_, ScanCache>,
+    url: String,
+    service: String,
+    quality: Option<String>,
+) -> Result<MusicSpotiFlacResult, String> {
+    let url = url.trim().to_string();
+    if url.is_empty() {
+        return Err("Paste a music URL first.".to_string());
+    }
+
+    let cmd = resolve_spotiflac().ok_or_else(|| {
+        "SpotiFLAC CLI not found. Install it first, then relaunch Ghosty if you opened the app from Finder.".to_string()
+    })?;
+    let output_dir = music_output_dir(info.inner());
+    std::fs::create_dir_all(&output_dir).map_err(|e| e.to_string())?;
+    let baseline_files = current_music_file_set(&output_dir);
+    let service = normalize_service(&service);
+
+    let mut args = vec![
+        url,
+        output_dir.display().to_string(),
+        "--service".to_string(),
+        service.clone(),
+        "--quality".to_string(),
+        quality.unwrap_or_else(|| "LOSSLESS".to_string()).trim().to_string(),
+        "--use-artist-subfolders".to_string(),
+        "--use-album-subfolders".to_string(),
+        "--use-album-track-numbers".to_string(),
+        "--first-artist-only".to_string(),
+        "--filename-format".to_string(),
+        "{track}. {title}".to_string(),
+        "--verbose".to_string(),
+    ];
+    let mut tidal_api_mode = "spotiflac_public";
+    if let Some(tidal_api) = catalog.get_setting("spotiflac_tidal_api").filter(|s| !s.trim().is_empty()) {
+        tidal_api_mode = "custom";
+        args.push("--tidal-api".to_string());
+        args.push(tidal_api.trim().to_string());
+    } else if service == "tidal" {
+        let _ = app.emit(
+            SPOTIFLAC_OUTPUT_EVENT,
+            MusicSpotiFlacOutput {
+                stream: "meta".to_string(),
+                line: "Using SpotiFLAC community TIDAL API pool (no account login required).".to_string(),
+                completed_files: None,
+            },
+        );
+    }
+    let rendered = render_command(&cmd.program, &cmd.fixed_args, &args);
+    let program = cmd.program.clone();
+    let fixed_args = cmd.fixed_args.clone();
+
+    let _ = app.emit(
+        SPOTIFLAC_OUTPUT_EVENT,
+        MusicSpotiFlacOutput {
+            stream: "meta".to_string(),
+            line: format!("Running: {rendered}"),
+            completed_files: None,
+        },
+    );
+
+    let (progress_stop_tx, progress_stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let progress_task = tokio::spawn(watch_spotiflac_completed_files(
+        app.clone(),
+        output_dir.clone(),
+        baseline_files.clone(),
+        progress_stop_rx,
+    ));
+
+    let mut command = tokio::process::Command::new(&program);
+    command.args(&fixed_args);
+    command.args(&args);
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(err) => {
+            let _ = progress_stop_tx.send(());
+            let _ = progress_task.await;
+            return Err(err.to_string());
+        }
+    };
+
+    let stdout_lines = Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
+    let stderr_lines = Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
+
+    let stdout_task = child.stdout.take().map(|stdout| {
+        let app = app.clone();
+        let lines = stdout_lines.clone();
+        tokio::spawn(async move {
+            pump_spotiflac_output(app, "stdout", stdout, lines).await;
+        })
+    });
+    let stderr_task = child.stderr.take().map(|stderr| {
+        let app = app.clone();
+        let lines = stderr_lines.clone();
+        tokio::spawn(async move {
+            pump_spotiflac_output(app, "stderr", stderr, lines).await;
+        })
+    });
+
+    let status = child.wait().await;
+    if let Some(task) = stdout_task {
+        let _ = task.await;
+    }
+    if let Some(task) = stderr_task {
+        let _ = task.await;
+    }
+
+    let stdout = {
+        let lines = stdout_lines.lock().await;
+        tail_vec_lines(&lines, 120)
+    };
+    let stderr = {
+        let lines = stderr_lines.lock().await;
+        tail_vec_lines(&lines, 120)
+    };
+    let _ = progress_stop_tx.send(());
+    let _ = progress_task.await;
+    let completed_files = current_music_file_set(&output_dir)
+        .into_iter()
+        .filter(|path| !baseline_files.contains(path))
+        .count();
+    let status = status.map_err(|e| e.to_string())?;
+    if !status.success() {
+        let mut detail = if !stderr.is_empty() {
+            stderr.clone()
+        } else if !stdout.is_empty() {
+            stdout.clone()
+        } else {
+            format!("SpotiFLAC exited with status {:?}.", status.code())
+        };
+        if tidal_error_is_missing_bearer(&detail) {
+            detail = format!("{}\n{}", detail, tidal_missing_bearer_hint(tidal_api_mode));
+        }
+        return Err(format!("SpotiFLAC failed. {detail}"));
+    }
+    if completed_files == 0 {
+        let mut detail = if !stderr.is_empty() {
+            stderr.clone()
+        } else if !stdout.is_empty() {
+            stdout.clone()
+        } else {
+            "SpotiFLAC exited successfully, but Ghosty did not see any completed music files written to disk.".to_string()
+        };
+        if tidal_error_is_missing_bearer(&detail) {
+            detail = format!("{}\n{}", detail, tidal_missing_bearer_hint(tidal_api_mode));
+        }
+        return Err(format!(
+            "SpotiFLAC finished but saved no new music files in {}. {}",
+            output_dir.display(),
+            detail
+        ));
+    }
+
+    invalidate_scan(&cache);
+    Ok(MusicSpotiFlacResult {
+        command: rendered,
+        output_dir: output_dir.display().to_string(),
+        stdout,
+        stderr,
+    })
+}
+
+#[tauri::command]
+async fn music_spotiflac_install() -> Result<MusicSpotiFlacInstallResult, String> {
+    if resolve_spotiflac().is_some() {
+        let command = resolve_spotiflac()
+            .and_then(|cmd| Some(cmd.program.display().to_string()))
+            .unwrap_or_else(|| "spotiflac".to_string());
+        return Ok(MusicSpotiFlacInstallResult {
+            command,
+            resolved_command: resolve_spotiflac().map(|cmd| cmd.program.display().to_string()),
+            stdout: "SpotiFLAC is already installed.".to_string(),
+            stderr: String::new(),
+        });
+    }
+
+    let path = system_path_for_installs();
+    let mut failures = Vec::new();
+
+    if find_bin("pipx").is_none() {
+        if let Some(brew) = find_bin("brew") {
+            let (ok, rendered, stdout, stderr) = run_install_capture(
+                brew.display().to_string(),
+                vec!["install".to_string(), "pipx".to_string()],
+                path.clone(),
+                40,
+            )
+            .await?;
+            if !ok {
+                let detail = if !stderr.is_empty() {
+                    stderr
+                } else if !stdout.is_empty() {
+                    stdout
+                } else {
+                    "exit status unknown".to_string()
+                };
+                failures.push(format!("{rendered}: {detail}"));
+            }
+        }
+    }
+
+    let attempts = install_attempts();
+    if attempts.is_empty() {
+        return Err("Couldn't find `pipx` or `python3`, so Ghosty can't install SpotiFLAC automatically on this machine.".to_string());
+    }
+
+    for (program, args) in attempts {
+        let (ok, rendered, stdout, stderr) = run_install_capture(program, args, path.clone(), 40).await?;
+        if ok {
+            let resolved = resolve_spotiflac().map(|cmd| cmd.program.display().to_string());
+            return Ok(MusicSpotiFlacInstallResult {
+                command: rendered,
+                resolved_command: resolved,
+                stdout,
+                stderr,
+            });
+        }
+        let detail = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            "exit status unknown".to_string()
+        };
+        failures.push(format!("{rendered}: {detail}"));
+    }
+
+    Err(format!("Couldn't install SpotiFLAC automatically. {}", failures.join(" | ")))
 }
 
 /// Look up posters/overviews for un-enriched items via TMDB (needs `tmdb_key`).
@@ -623,6 +2275,13 @@ struct DownloadedItem {
     media_type: String, // "movie" | "show" | "music"
     season: Option<i64>,
     episode: Option<i64>,
+    /// Embedded audio tags (music only) — the Music view groups by these, since the
+    /// path no longer carries artist/album once a file is flattened into the library.
+    artist: Option<String>,
+    album: Option<String>,
+    track_no: Option<i64>,
+    /// Embedded album artwork (music only), served from the local /art cache.
+    artwork_url: Option<String>,
     size_bytes: i64,
     /// File mtime as epoch seconds — drives the "Recently added" feed.
     added_at: i64,
@@ -849,8 +2508,32 @@ fn enc_path(rel: &str) -> String {
 /// re-runs `list_downloaded` on mount, so without this a Library→Movies→Music sweep
 /// re-walks the same folder several times. Invalidated explicitly on any mutation
 /// (add/remove/trash/clear/organize); the short TTL also picks up just-finished downloads.
-struct ScanCache(Mutex<Option<(Vec<DownloadedItem>, Instant)>>);
+#[derive(Clone)]
+struct ScanCache(Arc<Mutex<Option<(Vec<DownloadedItem>, Instant)>>>);
 const SCAN_TTL: Duration = Duration::from_secs(5);
+
+/// Start an FSEvents watcher on the download folder. When files land there — a download
+/// finishing, the organize pass, anything — it invalidates the scan cache and emits
+/// `library://changed` so the UI re-scans automatically (no manual Refresh). Debounced so
+/// a torrent writing many chunks coalesces into one refresh. Source-agnostic: it only
+/// knows "files changed on disk", nothing about where they came from.
+fn start_library_watcher(app: tauri::AppHandle, dir: PathBuf, cache: ScanCache) {
+    use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebounceEventResult};
+    use tauri::Emitter;
+    let mut debouncer = match new_debouncer(Duration::from_secs(2), move |res: DebounceEventResult| {
+        if res.is_ok() {
+            invalidate_scan(&cache);
+            let _ = app.emit("library://changed", ());
+        }
+    }) {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    if debouncer.watcher().watch(&dir, RecursiveMode::Recursive).is_ok() {
+        // Keep the watcher alive for the app's lifetime (dropping it stops watching).
+        std::mem::forget(debouncer);
+    }
+}
 
 fn invalidate_scan(cache: &ScanCache) {
     if let Ok(mut g) = cache.0.lock() {
@@ -858,9 +2541,44 @@ fn invalidate_scan(cache: &ScanCache) {
     }
 }
 
+fn music_artwork_id(rel: &str, size_bytes: i64, added_at: i64) -> String {
+    let mut h = Sha256::new();
+    h.update(rel.as_bytes());
+    h.update(b":");
+    h.update(size_bytes.to_le_bytes());
+    h.update(b":");
+    h.update(added_at.to_le_bytes());
+    format!("music-{:x}", h.finalize())
+}
+
+fn cached_music_artwork_url(
+    art_dir: &std::path::Path,
+    rel: &str,
+    size_bytes: i64,
+    added_at: i64,
+    bytes: &[u8],
+) -> Option<String> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let id = music_artwork_id(rel, size_bytes, added_at);
+    let path = art_dir.join(&id);
+    if path.exists() {
+        if path.is_file() {
+            return Some(format!("http://127.0.0.1:{}/art/{id}", engine::STREAM_PORT));
+        }
+        return None;
+    }
+    std::fs::write(&path, bytes)
+        .ok()
+        .map(|_| format!("http://127.0.0.1:{}/art/{id}", engine::STREAM_PORT))
+}
+
 /// The actual disk walk + parse (uncached). Kept separate so the command can cache it.
 fn scan_downloaded(info: &AppInfo, catalog: &Catalog) -> Vec<DownloadedItem> {
     let root = std::path::PathBuf::from(&info.download_dir);
+    let art_dir = std::path::PathBuf::from(&info.data_dir).join("artwork");
+    std::fs::create_dir_all(&art_dir).ok();
     let removed = removed_set(catalog);
     export::scan(&root)
         .into_iter()
@@ -874,15 +2592,28 @@ fn scan_downloaded(info: &AppInfo, catalog: &Catalog) -> Vec<DownloadedItem> {
             } else {
                 format!("http://127.0.0.1:{}/file/{}", engine::STREAM_PORT, enc_path(&rel))
             };
+            // For audio, embedded tags are the source of truth for artist/album/track/title.
+            let (artist, album, track_no, tag_title, embedded_art) = if e.kind == "audio" {
+                metadata::read_audio_tags(&abs)
+            } else {
+                (None, None, None, None, None)
+            };
+            let artwork_url = embedded_art.as_deref().and_then(|bytes| {
+                cached_music_artwork_url(&art_dir, &rel, e.size_bytes as i64, e.added_at, bytes)
+            });
             Some(DownloadedItem {
                 in_library: !removed.contains(&rel),
                 id: rel.clone(),
-                title: e.title,
+                title: tag_title.unwrap_or(e.title),
                 file_name: e.file_name,
                 kind: e.kind,
                 media_type: e.media_type,
                 season: e.season,
                 episode: e.episode,
+                artist,
+                album,
+                track_no,
+                artwork_url,
                 size_bytes: e.size_bytes as i64,
                 added_at: e.added_at,
                 url,
@@ -939,7 +2670,7 @@ async fn organize_run(
 ) -> Result<organize::OrganizeResult, String> {
     use tauri::Emitter;
     let root = std::path::PathBuf::from(&info.download_dir);
-    let organized = root.join("Organized");
+    let organized = root.join("Library");
     let llm = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .build()
@@ -1012,7 +2743,8 @@ struct ConvertResult {
 }
 
 /// Transcode non-portable audio (FLAC/OGG/Opus/WMA/AIFF…) into a device-friendly
-/// format under a `Converted/` folder. Originals stay put (keep seeding).
+/// format under a `Converted/` folder. Originals stay put (keep seeding). Desktop only.
+#[cfg(not(target_os = "ios"))]
 #[tauri::command]
 async fn convert_audio(
     app: tauri::AppHandle,
@@ -1064,6 +2796,16 @@ async fn convert_audio(
     .await
     .map_err(|e| e.to_string())?;
     Ok(res)
+}
+
+#[cfg(target_os = "ios")]
+#[tauri::command]
+async fn convert_audio(
+    _app: tauri::AppHandle,
+    _info: tauri::State<'_, AppInfo>,
+    _format: String,
+) -> Result<ConvertResult, String> {
+    Err("Audio conversion is desktop-only".into())
 }
 
 /// Organize + scan up to `limit` un-processed items: the local LLM parses each
@@ -1197,6 +2939,70 @@ async fn ai_scan(
     })
 }
 
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct CleanTitlesResult {
+    /// (id, cleanTitle) for every requested id that now has a clean title (cache + this run).
+    titles: Vec<(String, String)>,
+    /// Requested ids still missing a clean title — call again with the same ids to do more.
+    remaining: usize,
+    ai_used: bool,
+}
+
+/// Turn messy release-name titles into clean display names for a set of catalog items,
+/// using the local LLM (regex fallback) and caching each result in `meta.clean_title`.
+/// Cache hits are free; only up to `limit` uncached titles are cleaned per call so the
+/// search UI stays responsive — the caller loops with the same ids until `remaining` is 0.
+#[tauri::command]
+async fn clean_titles(
+    catalog: tauri::State<'_, Catalog>,
+    ids: Vec<String>,
+    limit: Option<i64>,
+) -> Result<CleanTitlesResult, String> {
+    let budget = limit.unwrap_or(8).clamp(1, 40) as usize;
+    let llm = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let model = resolve_model(catalog.inner(), &llm).await;
+
+    let mut out = CleanTitlesResult::default();
+    let mut cleaned_now = 0usize;
+
+    for id in &ids {
+        // Cache hit — return the stored clean title for free.
+        if let Some(ct) = catalog.clean_title_for(id) {
+            out.titles.push((id.clone(), ct));
+            continue;
+        }
+        // Stay within this batch's budget; the rest is reported as `remaining`.
+        if cleaned_now >= budget {
+            out.remaining += 1;
+            continue;
+        }
+        let Some(raw) = catalog.raw_title_for(id) else { continue };
+        let parsed = match &model {
+            Some(m) => ai::parse_title(&llm, m, &raw).await.ok(),
+            None => None,
+        };
+        if parsed.is_some() {
+            out.ai_used = true;
+        }
+        let clean = parsed
+            .as_ref()
+            .map(|p| p.title.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| enrich::clean_title(&raw));
+        let clean = if clean.trim().is_empty() { raw.clone() } else { clean };
+        let media_type = parsed.as_ref().map(|p| p.kind.clone()).filter(|k| !k.is_empty());
+        let year = parsed.as_ref().and_then(|p| p.year);
+        let _ = catalog.set_clean_title(id, &clean, media_type.as_deref(), year, now_ms());
+        out.titles.push((id.clone(), clean));
+        cleaned_now += 1;
+    }
+    Ok(out)
+}
+
 #[tauri::command]
 async fn pause_download(
     engine: tauri::State<'_, Engine>,
@@ -1288,6 +3094,9 @@ async fn import_from_browser(
 // ---- export to media libraries (Plex / Apple Music / generic folder) ----
 
 /// Native folder picker (supports creating new folders). Returns the chosen path.
+/// Desktop only — iOS/iPadOS has no directory picker (tauri-plugin-dialog exposes
+/// only file open/save there), so the app uses its sandbox Documents folder instead.
+#[cfg(not(target_os = "ios"))]
 #[tauri::command]
 async fn pick_folder(app: tauri::AppHandle) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
@@ -1300,6 +3109,13 @@ async fn pick_folder(app: tauri::AppHandle) -> Option<String> {
         .flatten()
         .and_then(|fp| fp.into_path().ok())
         .map(|p| p.display().to_string())
+}
+
+/// iOS has no folder picker — downloads live in the app's Documents sandbox.
+#[cfg(target_os = "ios")]
+#[tauri::command]
+async fn pick_folder(_app: tauri::AppHandle) -> Option<String> {
+    None
 }
 
 /// Choose a new storage folder. Optionally migrate (move) existing downloads into it.
@@ -1338,6 +3154,44 @@ fn set_storage_dir(
 /// Relaunch the app (so a new storage folder takes effect).
 #[tauri::command]
 fn restart_app(app: tauri::AppHandle) {
+    app.restart();
+}
+
+/// Relaunch after an OTA update has staged a new bundle.
+///
+/// On macOS the updater swaps the .app in place, but the plugin's plain
+/// `relaunch()` re-execs so fast that Launch Services can reopen the OLD
+/// bundle before this process fully exits. We instead spawn a detached
+/// `/bin/sh` that waits for our PID to die, pauses, then `open`s the (now
+/// freshly swapped) bundle — guaranteeing the NEW version comes up. For
+/// `tauri dev` (no .app wrapper) and non-macOS we fall back to `app.restart()`.
+#[tauri::command]
+fn relaunch_for_update<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        // <bundle>.app/Contents/MacOS/<bin> → climb three parents to the .app.
+        let bundle = exe
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf());
+        if let Some(bundle) = bundle {
+            if bundle.extension().and_then(|e| e.to_str()) == Some("app") {
+                let pid = std::process::id();
+                let bundle_arg = bundle.to_string_lossy().replace('"', "\\\"");
+                let script = format!(
+                    "while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; sleep 0.5; open \"{bundle_arg}\""
+                );
+                std::process::Command::new("/bin/sh")
+                    .arg("-c")
+                    .arg(&script)
+                    .spawn()
+                    .map_err(|e| format!("failed to spawn relaunch helper: {e}"))?;
+                std::process::exit(0);
+            }
+        }
+    }
     app.restart();
 }
 
@@ -1510,6 +3364,9 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // OTA auto-update + the relaunch the in-app UpdateBanner uses after a swap.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let data_dir = app
                 .path()
@@ -1527,16 +3384,36 @@ pub fn run() {
             // A user-chosen storage folder (Settings) overrides the default download dir.
             let stored_dir = catalog.get_setting("storage_dir").filter(|s| !s.trim().is_empty());
             app.manage(catalog);
-            app.manage(ScanCache(Mutex::new(None)));
+            let scan_cache = ScanCache(Arc::new(Mutex::new(None)));
+            app.manage(scan_cache.clone());
 
             // Streaming engine (librqbit + loopback HTTP server).
             let download_dir = stored_dir.map(std::path::PathBuf::from).unwrap_or_else(|| {
-                app.path()
-                    .download_dir()
-                    .unwrap_or_else(|_| std::env::temp_dir())
-                    .join("The Black Pearl")
+                // iOS: write into the app-sandbox Documents dir so downloads appear in the
+                // Files app (UIFileSharingEnabled + LSSupportsOpeningDocumentsInPlace).
+                #[cfg(target_os = "ios")]
+                {
+                    app.path().document_dir().unwrap_or_else(|_| std::env::temp_dir())
+                }
+                #[cfg(not(target_os = "ios"))]
+                {
+                    app.path()
+                        .download_dir()
+                        .unwrap_or_else(|_| std::env::temp_dir())
+                        .join("The Black Pearl")
+                }
             });
             std::fs::create_dir_all(&download_dir).ok();
+            // Migrate the old "Organized" library folder name to "Library" (one-time, idempotent).
+            {
+                let old = download_dir.join("Organized");
+                let new = download_dir.join("Library");
+                if old.is_dir() && !new.exists() {
+                    let _ = std::fs::rename(&old, &new);
+                }
+            }
+            // Auto-refresh the library when files land in the download folder.
+            start_library_watcher(app.handle().clone(), download_dir.clone(), scan_cache);
             let art_dir = data_dir.join("artwork");
             std::fs::create_dir_all(&art_dir).ok();
             let (ffmpeg, ffprobe) = engine::resolve_ffmpeg();
@@ -1562,6 +3439,7 @@ pub fn run() {
             torrent_stats,
             list_downloads,
             media_info,
+            list_subtitles,
             remove_torrent,
             list_sources,
             add_source,
@@ -1573,8 +3451,16 @@ pub fn run() {
             get_setting,
             set_setting,
             clear_catalog,
+            tidal_auth_status,
+            tidal_save_credentials,
+            tidal_clear_credentials,
+            tidal_test_auth,
+            tidal_authorize_login,
             app_info,
             vpn_status,
+            music_spotiflac_status,
+            music_spotiflac_install,
+            music_spotiflac_download,
             enrich_catalog,
             fetch_posters,
             tv_search,
@@ -1585,6 +3471,7 @@ pub fn run() {
             music_album_tracks,
             ai_status,
             ai_scan,
+            clean_titles,
             organize_run,
             tag_plan,
             tag_apply,
@@ -1606,6 +3493,7 @@ pub fn run() {
             pick_folder,
             set_storage_dir,
             restart_app,
+            relaunch_for_update,
             list_exportable,
             export_items,
             popular_shows,
@@ -1613,8 +3501,11 @@ pub fn run() {
             spotify::spotify_status,
             spotify::spotify_login,
             spotify::spotify_logout,
+            spotify::spotify_playlist_preview,
             spotify::spotify_replicate,
-            spotify::spotify_album_art
+            spotify::spotify_album_art,
+            spotify::spotify_search_artists,
+            spotify::spotify_artist_albums
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -36,6 +36,8 @@ export interface CatalogItem {
   poster?: string;
   description?: string;
   year?: number;
+  /** LLM/regex-cleaned display title (overlaid client-side); falls back to `title`. */
+  cleanTitle?: string | null;
 }
 
 export type SortKey = "popularity" | "recent" | "size" | "title";

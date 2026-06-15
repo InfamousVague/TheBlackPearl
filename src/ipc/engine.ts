@@ -31,6 +31,18 @@ export function mediaInfo(id: string): Promise<MediaInfo> {
   return invoke<MediaInfo>("media_info", { id });
 }
 
+/** A subtitle track for a local video — sidecar file or embedded stream, served as WebVTT. */
+export interface SubTrack {
+  label: string;
+  lang: string;
+  url: string;
+}
+
+/** Subtitle tracks for a local video by its relative path under the download folder. */
+export function listSubtitles(rel: string): Promise<SubTrack[]> {
+  return invoke<SubTrack[]>("list_subtitles", { rel });
+}
+
 export function listDownloads(): Promise<DownloadStats[]> {
   return invoke<DownloadStats[]>("list_downloads");
 }

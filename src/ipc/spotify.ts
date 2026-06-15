@@ -40,6 +40,12 @@ export interface ReplicaResult {
   tracks: ReplicaTrack[];
 }
 
+export interface SpotifyPlaylistPreviewResult {
+  playlist: string;
+  total: number;
+  tracks: SpotifyTrack[];
+}
+
 export function spotifyStatus(): Promise<SpotifyStatus> {
   return invoke<SpotifyStatus>("spotify_status");
 }
@@ -58,13 +64,45 @@ export function spotifyReplicate(playlistUrl: string): Promise<ReplicaResult> {
   return invoke<ReplicaResult>("spotify_replicate", { playlistUrl });
 }
 
+/** Fetch Spotify playlist tracks only (no source matching), for import previews. */
+export function spotifyPlaylistPreview(playlistUrl: string): Promise<SpotifyPlaylistPreviewResult> {
+  return invoke<SpotifyPlaylistPreviewResult>("spotify_playlist_preview", { playlistUrl });
+}
+
 export interface AlbumArt {
   artist: string;
   album: string;
   art: string | null;
 }
 
+export interface SpotifyArtist {
+  id: string;
+  name: string;
+  image: string | null;
+  url: string;
+}
+
+export interface SpotifyAlbum {
+  id: string;
+  name: string;
+  artist: string;
+  image: string | null;
+  url: string;
+  year: number | null;
+  trackCount: number;
+}
+
 /** Look up Spotify cover art for a batch of (artist, album) pairs — covers only. */
 export function spotifyAlbumArt(albums: { artist: string; album: string }[]): Promise<AlbumArt[]> {
   return invoke<AlbumArt[]>("spotify_album_art", { albums });
+}
+
+/** Search Spotify's public artist catalog using the stored app credentials. */
+export function spotifySearchArtists(query: string): Promise<SpotifyArtist[]> {
+  return invoke<SpotifyArtist[]>("spotify_search_artists", { query });
+}
+
+/** Load an artist's Spotify albums for one-click complete-album downloads. */
+export function spotifyArtistAlbums(artistId: string): Promise<SpotifyAlbum[]> {
+  return invoke<SpotifyAlbum[]>("spotify_artist_albums", { artistId });
 }

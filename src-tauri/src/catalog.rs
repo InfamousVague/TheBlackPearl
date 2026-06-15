@@ -424,6 +424,50 @@ impl Catalog {
         Ok(())
     }
 
+    /// The cached clean display title for an item, if one has been computed.
+    pub fn clean_title_for(&self, id: &str) -> Option<String> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row("SELECT clean_title FROM meta WHERE id=?1", params![id], |r| {
+            r.get::<_, Option<String>>(0)
+        })
+        .ok()
+        .flatten()
+        .filter(|t| !t.trim().is_empty())
+    }
+
+    /// The raw (messy) release-name title for an item.
+    pub fn raw_title_for(&self, id: &str) -> Option<String> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row("SELECT title FROM items WHERE id=?1", params![id], |r| r.get::<_, String>(0)).ok()
+    }
+
+    /// Cache a cleaned display title (and optional type/year) for an item WITHOUT marking
+    /// it fully scanned — title cleaning is lighter than the full AI scan, so a cleaned
+    /// item should not yet surface in the Library.
+    pub fn set_clean_title(
+        &self,
+        id: &str,
+        clean_title: &str,
+        media_type: Option<&str>,
+        year: Option<i64>,
+        now: i64,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO meta (id, clean_title, media_type, updated_at)
+             VALUES (?1,?2,?3,?4)
+             ON CONFLICT(id) DO UPDATE SET
+               clean_title=excluded.clean_title,
+               media_type =COALESCE(excluded.media_type, meta.media_type),
+               updated_at =excluded.updated_at",
+            params![id, clean_title, media_type, now],
+        )?;
+        if let Some(y) = year {
+            let _ = conn.execute("UPDATE items SET year=COALESCE(year,?2) WHERE id=?1", params![id, y]);
+        }
+        Ok(())
+    }
+
     /// Items that have been scanned, joined with their metadata — the Library.
     pub fn list_library(&self, limit: i64) -> Result<Vec<LibraryItem>> {
         let conn = self.conn.lock().unwrap();

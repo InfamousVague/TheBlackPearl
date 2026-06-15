@@ -1,22 +1,25 @@
 //! "Clean up the library folder" — an Ollama-driven tidy pass over the download root.
 //!
 //! Runs INCREMENTALLY, one file at a time: for each media file the local model parses
-//! the messy release name into a clean title / year / type / season+episode, a foldered
-//! Plex-convention destination is computed (so Plex/Jellyfin/Infuse all read it), and the
-//! file is MOVED right then — into a SEPARATE `Organized/` library folder, kept apart
-//! from the loose downloads. Because each file is finished before the next is touched and
-//! organized files leave the source tree, a crash or stop loses no work: the next run
-//! re-scans the source (skipping `Organized/`) and simply resumes where it left off.
+//! the messy release name into clean metadata, a foldered Plex-convention destination is
+//! computed (so Plex/Jellyfin/Infuse all read it) — `Movies/Title (Year)/…`, `TV Shows/
+//! Title/Season NN/…`, and for music `Music/Artist/Album/NN - Title.ext` (parsed by the
+//! music-aware model + the file's embedded tags) — and the file is MOVED right then, into
+//! a SEPARATE `Organized/` library folder kept apart from the loose downloads. Because each
+//! file is finished before the next is touched and organized files leave the source tree, a
+//! crash or stop loses no work: the next run re-scans the source (skipping `Organized/`,
+//! but re-nesting any music still sitting flat in `Music/`) and resumes where it left off.
 //! Safety: never deletes a file, never overwrites an existing target, only ever removes
 //! *empty* leftover folders. Falls back to the regex parser when Ollama is offline.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
 use crate::ai;
 use crate::export::{self, Exportable};
+use crate::metadata;
 
 const SUBTITLE_EXT: &[&str] = &["srt", "ass", "ssa", "vtt", "sub", "idx"];
 
@@ -77,11 +80,20 @@ pub async fn run(
     on_progress: impl Fn(OrganizeStep),
 ) -> OrganizeResult {
     // Source = everything under the download root EXCEPT the organized library subtree
-    // (already-organized files are "done" and must not be re-processed).
-    let files: Vec<Exportable> = export::scan(root)
+    // (already-organized files are "done" and must not be re-processed)…
+    let music_dir = organized_root.join("Music");
+    let mut files: Vec<Exportable> = export::scan(root)
         .into_iter()
         .filter(|f| !Path::new(&f.path).starts_with(organized_root))
         .collect();
+    // …PLUS any music sitting flat in Organized/Music/ from older runs, so it gets
+    // re-nested into Artist/Album folders (direct children of Music/ only — already-nested
+    // tracks live deeper and are left alone).
+    let flat_music: Vec<Exportable> = export::scan(&music_dir)
+        .into_iter()
+        .filter(|f| f.kind == "audio" && Path::new(&f.path).parent() == Some(music_dir.as_path()))
+        .collect();
+    files.extend(flat_music);
     let total = files.len();
     let mut result = OrganizeResult {
         root: organized_root.display().to_string(),
@@ -90,24 +102,47 @@ pub async fn run(
         ..Default::default()
     };
 
-    // Reserve targets we've already assigned this run so two files can't collide.
+    // First, fold any pre-existing spelling variants of one show/movie ("Clarkson's Farm"
+    // vs "Clarksons Farm" vs "Clarksons' Farm") into a single folder so the library
+    // self-heals each run.
+    consolidate_variants(organized_root);
+
+    // Reserve targets we've assigned this run so two files can't collide, and remember the
+    // canonical spelling chosen per show/movie so every file of it lands in the SAME folder
+    // no matter how the model spelled this particular episode.
     let mut taken: BTreeSet<String> = BTreeSet::new();
+    let mut canon: HashMap<String, String> = HashMap::new();
 
     for (idx, f) in files.iter().enumerate() {
         let ext = ext_of(&f.file_name);
-        let stem = f.file_name.strip_suffix(&format!(".{ext}")).unwrap_or(&f.file_name);
+        let from = PathBuf::from(&f.path);
 
-        // LLM parse the name; fall back to the regex fields from the scan.
-        let parsed = match model {
-            Some(m) => ai::parse_title(client, m, stem).await.ok(),
-            None => None,
+        // Music gets Artist/Album folders (parsed by the music-aware model + embedded
+        // tags); video gets the show/movie title logic.
+        let (mut to_rel, media): (String, String) = if f.kind == "audio" {
+            let (tags, _ai) = metadata::music_tags_for(&from, client, model).await;
+            (build_music_rel(&tags, &ext, organized_root), "music".to_string())
+        } else {
+            let stem = f.file_name.strip_suffix(&format!(".{ext}")).unwrap_or(&f.file_name);
+            // LLM parse the name; fall back to the regex fields from the scan.
+            let parsed = match model {
+                Some(m) => ai::parse_title(client, m, stem).await.ok(),
+                None => None,
+            };
+            let media = media_type_of(parsed.as_ref(), f);
+            let raw_title = parsed
+                .as_ref()
+                .map(|p| p.title.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .unwrap_or_else(|| f.title.clone());
+            let subdir = if media == "show" { "TV Shows" } else { "Movies" };
+            // Collapse spelling variants to one consistent folder title for this show/movie.
+            let title = canonicalize_title(&raw_title, &organized_root.join(subdir), &mut canon);
+            (build_rel(&title, parsed.as_ref(), f, &ext, &media), media)
         };
-        let mut to_rel = target_rel(parsed.as_ref(), f, &ext);
         to_rel = dedupe_target(&mut taken, organized_root, to_rel);
 
-        let from = PathBuf::from(&f.path);
         let to = organized_root.join(&to_rel);
-        let media = media_type_of(parsed.as_ref(), f);
 
         // Move it right now, into the separate library. Each move is durable on its own.
         let (status, message): (&str, Option<String>) = if to.exists() {
@@ -156,37 +191,258 @@ pub async fn run(
 
 // ---- naming ----
 
-/// Plex-convention destination relative to the root, driven by the LLM parse when present.
-fn target_rel(p: Option<&ai::Parsed>, f: &Exportable, ext: &str) -> String {
-    let raw_title = p
-        .map(|p| p.title.trim().to_string())
-        .filter(|t| !t.is_empty())
-        .unwrap_or_else(|| f.title.clone());
-    let title = export::sanitize(&raw_title);
-    // sanitize() strips path separators; also reject `.`/`..` so a title can never
-    // resolve to a parent dir once joined onto the organized root.
-    let title = if title.is_empty() || title == "." || title == ".." { "Unknown".to_string() } else { title };
+/// Plex-convention destination relative to the organized root, from an ALREADY-canonical
+/// title plus the parsed season/episode/year. `media` is "music" | "show" | "movie".
+fn build_rel(title: &str, p: Option<&ai::Parsed>, f: &Exportable, ext: &str, media: &str) -> String {
+    let title = if title.is_empty() { "Unknown" } else { title };
+    match media {
+        "music" => format!("Music/{title}.{ext}"),
+        "show" => {
+            let ss = p.and_then(|p| p.season).or(f.season).unwrap_or(1);
+            let ee = p.and_then(|p| p.episode).or(f.episode).unwrap_or(1);
+            format!("TV Shows/{title}/Season {ss:02}/{title} - S{ss:02}E{ee:02}.{ext}")
+        }
+        _ => {
+            let year = p.and_then(|p| p.year).or(f.year);
+            let name = match year {
+                Some(y) => format!("{title} ({y})"),
+                None => title.to_string(),
+            };
+            format!("Movies/{name}/{name}.{ext}")
+        }
+    }
+}
 
-    if f.kind == "audio" {
-        return format!("Music/{title}.{ext}");
+/// Music destination relative to the organized root: `Music/Artist/Album/NN - Title.ext`
+/// (Artist-only when there's no album). Artist/Album folder names reuse an existing
+/// matching folder so spelling variants collapse into one.
+fn build_music_rel(tags: &ai::MusicTags, ext: &str, organized_root: &Path) -> String {
+    let music_dir = organized_root.join("Music");
+
+    let artist_raw = tags.artist.as_deref().map(str::trim).filter(|a| !a.is_empty()).unwrap_or("Unknown Artist");
+    let artist = folder_name_in(&music_dir, artist_raw, "Unknown Artist");
+
+    let title_raw = tags.title.trim();
+    let title = export::sanitize(if title_raw.is_empty() { "Untitled" } else { title_raw });
+    let title = if title.is_empty() { "Untitled".to_string() } else { title };
+    let file = match tags.track.filter(|n| *n > 0) {
+        Some(n) => format!("{n:02} - {title}.{ext}"),
+        None => format!("{title}.{ext}"),
+    };
+
+    match tags.album.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
+        Some(album_raw) => {
+            let album = folder_name_in(&music_dir.join(&artist), album_raw, "Unknown Album");
+            format!("Music/{artist}/{album}/{file}")
+        }
+        None => format!("Music/{artist}/{file}"),
+    }
+}
+
+/// Pick a folder name for `raw` under `parent`: reuse an existing folder there whose
+/// normalized name matches (apostrophes, case and spacing ignored), else the sanitized
+/// `raw` — or `fallback` if it sanitizes away. Relies on the incremental run having
+/// already created earlier folders so siblings of one artist/album collapse together.
+fn folder_name_in(parent: &Path, raw: &str, fallback: &str) -> String {
+    let cleaned = export::sanitize(raw);
+    let cleaned = if cleaned.is_empty() || cleaned == "." || cleaned == ".." {
+        fallback.to_string()
+    } else {
+        cleaned
+    };
+    let key = norm_key(&cleaned);
+    if !key.is_empty() {
+        if let Ok(entries) = std::fs::read_dir(parent) {
+            for e in entries.flatten() {
+                if !e.path().is_dir() {
+                    continue;
+                }
+                if let Some(name) = e.file_name().to_str() {
+                    if norm_key(name) == key {
+                        return name.to_string();
+                    }
+                }
+            }
+        }
+    }
+    cleaned
+}
+
+// ---- title canonicalization (one folder per show/movie, despite spelling variants) ----
+
+/// A normalized comparison key: lowercase, apostrophes/punctuation dropped, whitespace
+/// collapsed. So "Clarkson's Farm", "Clarksons Farm" and "Clarksons' Farm" all map to the
+/// same key, "clarksons farm".
+fn norm_key(s: &str) -> String {
+    let mut out = String::new();
+    let mut prev_space = true; // leading-trim
+    for c in s.chars() {
+        if c.is_alphanumeric() {
+            for lc in c.to_lowercase() {
+                out.push(lc);
+            }
+            prev_space = false;
+        } else if c.is_whitespace() {
+            if !prev_space {
+                out.push(' ');
+                prev_space = true;
+            }
+        }
+        // apostrophes and other punctuation are dropped entirely
+    }
+    out.trim_end().to_string()
+}
+
+/// Drop a trailing " (YYYY)" from a folder name so a movie's title can be compared on its own.
+fn strip_trailing_year(name: &str) -> &str {
+    if name.ends_with(')') {
+        if let Some(idx) = name.rfind(" (") {
+            let inner = &name[idx + 2..name.len() - 1];
+            if inner.len() == 4 && inner.chars().all(|c| c.is_ascii_digit()) {
+                return name[..idx].trim_end();
+            }
+        }
+    }
+    name
+}
+
+/// Pick a consistent folder title for `raw`: the first spelling seen this run for its
+/// normalized key wins, and across runs an already-organized folder that matches the key
+/// is adopted — so every file of one show/movie lands in the SAME folder.
+fn canonicalize_title(raw: &str, media_dir: &Path, canon: &mut HashMap<String, String>) -> String {
+    let cleaned = export::sanitize(raw);
+    let cleaned = if cleaned.is_empty() || cleaned == "." || cleaned == ".." {
+        "Unknown".to_string()
+    } else {
+        cleaned
+    };
+    let key = norm_key(&cleaned);
+    if let Some(existing) = canon.get(&key) {
+        return existing.clone();
+    }
+    // Adopt an existing organized folder with the same key (handles resumed runs).
+    if let Ok(entries) = std::fs::read_dir(media_dir) {
+        for e in entries.flatten() {
+            if !e.path().is_dir() {
+                continue;
+            }
+            if let Some(name) = e.file_name().to_str() {
+                let folder_title = strip_trailing_year(name);
+                if norm_key(folder_title) == key {
+                    canon.insert(key, folder_title.to_string());
+                    return folder_title.to_string();
+                }
+            }
+        }
+    }
+    canon.insert(key, cleaned.clone());
+    cleaned
+}
+
+/// Merge pre-existing folders that are the same show/movie spelled differently into one.
+/// Runs over `TV Shows/` and `Movies/`. The winner is the variant with the most files
+/// (then one bearing an apostrophe, then alphabetical); the others' contents are moved in
+/// (re-titled to the winner's spelling) and the emptied variant folders removed. Movies
+/// keep their "(year)" in the key, so different years never merge.
+fn consolidate_variants(organized_root: &Path) {
+    for sub in ["TV Shows", "Movies"] {
+        let dir = organized_root.join(sub);
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let mut groups: HashMap<String, Vec<PathBuf>> = HashMap::new();
+        for e in entries.flatten() {
+            let p = e.path();
+            if !p.is_dir() {
+                continue;
+            }
+            let Some(name) = p.file_name().and_then(|s| s.to_str()) else { continue };
+            groups.entry(norm_key(name)).or_default().push(p);
+        }
+        for (_key, mut variants) in groups {
+            if variants.len() < 2 {
+                continue;
+            }
+            // Winner: most files, then has-apostrophe, then name ascending (deterministic).
+            variants.sort_by(|a, b| {
+                count_files(b)
+                    .cmp(&count_files(a))
+                    .then(has_apostrophe(b).cmp(&has_apostrophe(a)))
+                    .then(a.file_name().cmp(&b.file_name()))
+            });
+            let winner = variants[0].clone();
+            for loser in &variants[1..] {
+                merge_dir_into(loser, &winner);
+            }
+        }
+    }
+}
+
+fn count_files(dir: &Path) -> usize {
+    let mut n = 0;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                n += count_files(&p);
+            } else {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+fn has_apostrophe(dir: &Path) -> bool {
+    dir.file_name().and_then(|s| s.to_str()).map(|n| n.contains('\'')).unwrap_or(false)
+}
+
+/// Move every file under `src` into `dst` at the same relative path — re-titling the
+/// filename from the loser's spelling to the winner's — then drop the emptied dirs.
+/// Never overwrites an existing file (leaves the duplicate where it is).
+fn merge_dir_into(src: &Path, dst: &Path) {
+    let src_name = src.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+    let dst_name = dst.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+
+    let mut files = Vec::new();
+    collect_files(src, 0, &mut files);
+    for file in files {
+        let Ok(rel) = file.strip_prefix(src) else { continue };
+        let mut target = dst.join(rel);
+        // Re-title just the filename (the "Season NN" parent, if any, is preserved).
+        if let Some(fname) = file.file_name().and_then(|s| s.to_str()) {
+            if !src_name.is_empty() && fname.starts_with(&src_name) {
+                if let Some(parent) = target.parent() {
+                    target = parent.join(fname.replacen(&src_name, &dst_name, 1));
+                }
+            }
+        }
+        if !target.exists() {
+            let _ = move_file(&file, &target);
+        }
     }
 
-    let season = p.and_then(|p| p.season).or(f.season);
-    let episode = p.and_then(|p| p.episode).or(f.episode);
-    let llm_show = matches!(p.map(|p| p.kind.as_str()), Some("show") | Some("series") | Some("tv"));
-    let is_show = llm_show || f.media_type == "show" || (season.is_some() && episode.is_some());
+    // Remove now-empty directories of the loser, deepest first.
+    let mut dirs = Vec::new();
+    collect_dirs(src, 0, &mut dirs);
+    dirs.push(src.to_path_buf());
+    dirs.sort_by_key(|d| std::cmp::Reverse(d.components().count()));
+    for d in dirs {
+        let _ = std::fs::remove_dir(&d); // no-op if not empty
+    }
+}
 
-    if is_show {
-        let ss = season.unwrap_or(1);
-        let ee = episode.unwrap_or(1);
-        format!("TV Shows/{title}/Season {ss:02}/{title} - S{ss:02}E{ee:02}.{ext}")
-    } else {
-        let year = p.and_then(|p| p.year).or(f.year);
-        let name = match year {
-            Some(y) => format!("{title} ({y})"),
-            None => title,
-        };
-        format!("Movies/{name}/{name}.{ext}")
+fn collect_files(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+    if depth > 8 {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                collect_files(&p, depth + 1, out);
+            } else {
+                out.push(p);
+            }
+        }
     }
 }
 
@@ -301,5 +557,136 @@ fn collect_dirs(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
 
 fn ext_of(name: &str) -> String {
     name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spelling_variants_share_one_key() {
+        // The exact case from the bug report: these must all collapse to one folder.
+        let k = norm_key("Clarkson's Farm");
+        assert_eq!(k, "clarksons farm");
+        assert_eq!(norm_key("Clarksons Farm"), k);
+        assert_eq!(norm_key("Clarksons' Farm"), k);
+        assert_eq!(norm_key("CLARKSONS   FARM"), k);
+        assert_eq!(norm_key("  Clarkson’s  Farm "), k); // curly apostrophe + extra spaces
+    }
+
+    #[test]
+    fn distinct_titles_keep_distinct_keys() {
+        assert_ne!(norm_key("The Office"), norm_key("The Crown"));
+        assert_ne!(norm_key("Top Gear"), norm_key("Top Gun"));
+    }
+
+    #[test]
+    fn strips_movie_year_only() {
+        assert_eq!(strip_trailing_year("Dune (2021)"), "Dune");
+        assert_eq!(strip_trailing_year("Clarkson's Farm"), "Clarkson's Farm");
+        assert_eq!(strip_trailing_year("Blade Runner 2049"), "Blade Runner 2049");
+        assert_eq!(strip_trailing_year("WALL·E (2008)"), "WALL·E");
+    }
+
+    #[test]
+    fn canonical_title_reuses_first_spelling() {
+        let mut canon = HashMap::new();
+        let nodir = Path::new("/nonexistent-media-dir");
+        let a = canonicalize_title("Clarkson's Farm", nodir, &mut canon);
+        let b = canonicalize_title("Clarksons Farm", nodir, &mut canon);
+        let c = canonicalize_title("Clarksons' Farm", nodir, &mut canon);
+        assert_eq!(a, "Clarkson's Farm");
+        assert_eq!(b, a); // adopts the first spelling
+        assert_eq!(c, a);
+    }
+
+    #[test]
+    fn consolidate_merges_variant_folders_on_disk() {
+        use std::fs;
+        let base = std::env::temp_dir().join(format!("bp-consolidate-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let tv = base.join("TV Shows");
+        let mk = |folder: &str, eps: &[&str]| {
+            let p = tv.join(folder).join("Season 01");
+            fs::create_dir_all(&p).unwrap();
+            for ep in eps {
+                fs::write(p.join(format!("{folder} - {ep}.mkv")), b"x").unwrap();
+            }
+        };
+        // "Clarkson's Farm" has the most episodes → it wins.
+        mk("Clarkson's Farm", &["S01E01", "S01E02"]);
+        mk("Clarksons Farm", &["S01E03"]);
+        mk("Clarksons' Farm", &["S01E04"]);
+
+        consolidate_variants(&base);
+
+        let dirs: Vec<_> =
+            fs::read_dir(&tv).unwrap().flatten().filter(|e| e.path().is_dir()).collect();
+        assert_eq!(dirs.len(), 1, "variants should collapse to one folder");
+        let winner = dirs[0].path();
+        assert_eq!(winner.file_name().unwrap().to_str().unwrap(), "Clarkson's Farm");
+
+        // All four episodes land under it, re-titled to the winner's spelling.
+        let mut files: Vec<String> = fs::read_dir(winner.join("Season 01"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        files.sort();
+        assert_eq!(
+            files,
+            vec![
+                "Clarkson's Farm - S01E01.mkv",
+                "Clarkson's Farm - S01E02.mkv",
+                "Clarkson's Farm - S01E03.mkv",
+                "Clarkson's Farm - S01E04.mkv",
+            ]
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn music_goes_into_artist_album_folders() {
+        let root = Path::new("/nonexistent-organized-root");
+        let tags = ai::MusicTags {
+            title: "Something".into(),
+            artist: Some("The Beatles".into()),
+            album: Some("Abbey Road".into()),
+            track: Some(2),
+            ..Default::default()
+        };
+        assert_eq!(build_music_rel(&tags, "flac", root), "Music/The Beatles/Abbey Road/02 - Something.flac");
+    }
+
+    #[test]
+    fn music_without_album_uses_artist_only() {
+        let root = Path::new("/nonexistent-organized-root");
+        let tags = ai::MusicTags {
+            title: "Avril 14th".into(),
+            artist: Some("Aphex Twin".into()),
+            ..Default::default()
+        };
+        assert_eq!(build_music_rel(&tags, "mp3", root), "Music/Aphex Twin/Avril 14th.mp3");
+    }
+
+    #[test]
+    fn music_without_artist_is_unknown_artist() {
+        let root = Path::new("/nonexistent-organized-root");
+        let tags = ai::MusicTags { title: "Untitled Track".into(), ..Default::default() };
+        assert_eq!(build_music_rel(&tags, "wav", root), "Music/Unknown Artist/Untitled Track.wav");
+    }
+
+    #[test]
+    fn folder_name_reuses_existing_spelling_variant() {
+        use std::fs;
+        let base = std::env::temp_dir().join(format!("bp-folder-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(base.join("The Beatles")).unwrap();
+        // A case/spacing variant collapses onto the existing folder…
+        assert_eq!(folder_name_in(&base, "THE  BEATLES", "Unknown Artist"), "The Beatles");
+        // …but a genuinely different artist keeps its own name.
+        assert_eq!(folder_name_in(&base, "Radiohead", "Unknown Artist"), "Radiohead");
+        let _ = fs::remove_dir_all(&base);
+    }
 }
 

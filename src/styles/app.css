@@ -471,6 +471,43 @@ body {
   color: var(--gg-text-dim);
 }
 
+/* ---------- Support tip-jar pill ----------
+ * The shared TipPopover.css ships a taller, lighter marketing-nav trigger
+ * (kept byte-identical with libre.academy). In the app's top bar we want it to
+ * read as a sibling of the VPN / organize status chips, so .topbar-tip rescopes
+ * the trigger onto the same tokens + 28px geometry. The deck panel is untouched. */
+.topbar-tip .tip-popover-trigger {
+  height: 28px;
+  padding: 0 11px;
+  gap: 6px;
+  font-size: var(--text-sm-size);
+  font-weight: 600;
+  letter-spacing: normal;
+  color: var(--gg-text-muted);
+  background: var(--gg-surface);
+  border: 1px solid var(--gg-border);
+}
+.topbar-tip .tip-popover-trigger:hover,
+.topbar-tip .tip-popover-trigger:focus-visible,
+.topbar-tip .tip-popover-trigger--open {
+  color: var(--gg-text);
+  background: var(--gg-surface);
+  border-color: var(--gg-border-strong);
+  outline: none;
+}
+/* Heart matches the 13px chip glyphs; a toned coral keeps the "support" identity
+ * the way .vpn-chip.on carries a semantic colour, and warms further on hover. */
+.topbar-tip .tip-popover-trigger-icon {
+  width: 13px;
+  height: 13px;
+  color: #ff7e7e;
+}
+.topbar-tip .tip-popover-trigger:hover .tip-popover-trigger-icon,
+.topbar-tip .tip-popover-trigger:focus-visible .tip-popover-trigger-icon,
+.topbar-tip .tip-popover-trigger--open .tip-popover-trigger-icon {
+  color: #ff9a9a;
+}
+
 /* ---------- Main column ---------- */
 .main {
   flex: 1;
@@ -1821,8 +1858,45 @@ body::before {
 /* Reserve room so scrollable content never hides behind the bar. */
 .content { padding-bottom: 92px; }
 
-/* Prevent WKWebView overscroll bounce / swipe-nav on desktop. */
+/* ============ iPad / touch adaptations ============
+ * `.is-ios` / `.is-touch` are set on <html> at startup (lib/platform.ts);
+ * the @media block covers any coarse-pointer device. */
 html, body { overscroll-behavior: none; }
+
+/* Safe-area insets (notch / Dynamic Island / home indicator). viewport-fit=cover
+ * populates env(); max() guards the WKWebView quirk where they're briefly 0. */
+.is-ios .nav-rail {
+  margin-top: max(10px, env(safe-area-inset-top));
+  margin-bottom: max(10px, env(safe-area-inset-bottom));
+  margin-left: max(10px, env(safe-area-inset-left));
+}
+.is-ios .topbar { padding-top: env(safe-area-inset-top); }
+.is-ios .content { padding-right: max(22px, env(safe-area-inset-right)); }
+.is-ios .now-playing-bar { padding-bottom: max(0px, env(safe-area-inset-bottom)); }
+/* The macOS traffic-light gutter + window dragging are meaningless on iOS. */
+.is-ios .topbar-gutter { display: none; }
+
+/* Touch: no hover, so reveal the play/queue affordances always, and grow hit targets
+ * to Apple's 44pt minimum. Also kill the iOS long-press callout/selection on tappables. */
+@media (hover: none) and (pointer: coarse) {
+  .poster-card .play-badge,
+  .poster-seed .play-badge,
+  .lib-card .lib-play,
+  .card-queue,
+  .player-stage-controls,
+  .group-card .play-badge.group-add { opacity: 1; }
+
+  .nav-rail__item { width: 44px; height: 44px; }
+  .stage-btn { width: 44px; height: 44px; }
+  .ctx-item { padding: 11px 12px; }
+
+  .poster-card, .lib-card, .group-card, .nav-rail__item, .nav-item, .side-item,
+  .ctx-item, .search-chip, .stage-btn, .dl-row {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
 
 /* ---------- Base <SegmentedControl> ----------
  * It shares the ".seg" container class with the app's own segmented control, so the
@@ -1919,6 +1993,22 @@ html, body { overscroll-behavior: none; }
 .yt-seek:hover .yt-seek-thumb, .yt-seek.dragging .yt-seek-thumb { transform: translate(-50%,-50%) scale(1); }
 
 .yt-controls { display: flex; align-items: center; gap: 6px; width: 100%; }
+/* Subtitle (CC) button + the track menu that pops up above it. */
+.yt-sub-wrap { position: relative; display: flex; align-items: center; }
+.yt-sub-menu {
+  position: absolute; bottom: calc(100% + 8px); right: 0; min-width: 160px; max-width: 280px;
+  display: flex; flex-direction: column; padding: 6px;
+  background: rgba(20, 20, 22, 0.96); backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5); z-index: 5;
+}
+.yt-sub-item {
+  display: block; width: 100%; text-align: left; padding: 8px 12px; border: none;
+  background: transparent; color: #e9e9ee; font-family: inherit; font-size: var(--text-sm-size);
+  border-radius: 6px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.yt-sub-item:hover { background: rgba(255, 255, 255, 0.10); }
+.yt-sub-item.on { color: var(--gg-accent); font-weight: 600; }
 .yt-vol { display: flex; align-items: center; }
 .yt-vol-slider { width: 0; opacity: 0; transition: width 0.16s ease, opacity 0.16s ease; accent-color: #fff; cursor: pointer; }
 .yt-vol:hover .yt-vol-slider, .yt-vol:focus-within .yt-vol-slider { width: 76px; opacity: 1; margin: 0 4px; }

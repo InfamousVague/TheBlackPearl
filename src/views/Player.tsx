@@ -4,11 +4,11 @@ import { Spinner } from "@mattmattmattmatt/base/primitives/spinner/Spinner";
 import type { DownloadStats, MediaInfo } from "../lib/types";
 import { formatBytes, formatBytesPerSec, formatCount } from "../lib/format";
 import { parseEpisode } from "../lib/media";
-import { IN_TAURI } from "../ipc/engine";
+import { IN_TAURI, listSubtitles, type SubTrack } from "../ipc/engine";
 import { tvEpisodes, tvSearch, type TvEpisode, type TvShow } from "../ipc/library";
 import { ShowPanel } from "../components/ShowPanel";
 import {
-  arrowDown, arrowUp, chevronLeft, gauge, maximize, minimize, music,
+  arrowDown, arrowUp, captions, chevronLeft, gauge, maximize, minimize, music,
   pause, play, rectangleHorizontal, users, volume2, volumeX,
 } from "../lib/icons";
 
@@ -32,6 +32,8 @@ export interface PlayerItem {
   poster?: string;
   /** Direct loopback URL for an already-downloaded local file (Library playback). */
   url?: string;
+  /** Relative path under the download folder (local files only) — drives subtitle lookup. */
+  relpath?: string;
 }
 
 interface PlayerProps {
@@ -98,6 +100,27 @@ export function Player({ item, streamUrl, stats, info, onBack, onPlayEpisode }: 
   }, [streamUrl]);
   const transcoding = !isAudio && !!src && src.includes("/hls/");
 
+  // --- subtitles (local video only): sidecar + embedded tracks, served as WebVTT ---
+  const [subs, setSubs] = useState<SubTrack[]>([]);
+  const [activeSub, setActiveSub] = useState(-1); // -1 = off
+  const [subMenu, setSubMenu] = useState(false);
+  useEffect(() => {
+    setSubs([]);
+    setActiveSub(-1);
+    if (isAudio || !item.relpath || !IN_TAURI) return;
+    let alive = true;
+    listSubtitles(item.relpath).then((t) => { if (alive) setSubs(t); }).catch(() => {});
+    return () => { alive = false; };
+  }, [item.relpath, isAudio]);
+  // The browser only loads a VTT when its track mode isn't "disabled" — so toggle modes
+  // (not the `default` attr) to switch the showing track. Re-applied when tracks/src change.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const tt = v.textTracks;
+    for (let i = 0; i < tt.length; i++) tt[i].mode = i === activeSub ? "showing" : "disabled";
+  }, [activeSub, subs, src]);
+
   // --- custom player state ---
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -114,13 +137,39 @@ export function Player({ item, streamUrl, stats, info, onBack, onPlayEpisode }: 
   const [statsOpen, setStatsOpen] = useState(false);
   const hideTimer = useRef<number | undefined>(undefined);
 
+  // Buffering debounce: a stall only counts as "buffering" (→ spinner + chrome) if it
+  // outlasts a micro-buffer (~450ms). Brief stalls — an HLS segment boundary, a momentary
+  // hiccup — resolve before the timer fires, so they never flash the spinner or pop the chrome.
+  const bufferTimer = useRef<number | undefined>(undefined);
+  const markBuffering = useCallback(() => {
+    if (bufferTimer.current != null) return; // already pending
+    bufferTimer.current = window.setTimeout(() => {
+      bufferTimer.current = undefined;
+      setBuffering(true);
+    }, 450);
+  }, []);
+  const clearBuffering = useCallback(() => {
+    if (bufferTimer.current != null) {
+      window.clearTimeout(bufferTimer.current);
+      bufferTimer.current = undefined;
+    }
+    setBuffering(false);
+  }, []);
+
   useEffect(() => {
     setPaused(true);
-    setBuffering(true);
+    setBuffering(true); // a fresh stream IS loading — show the spinner immediately
     setErrored(false);
     setTime(0);
     setDuration(0);
     setVBuffered(0);
+    // Cancel any pending micro-buffer timer from the previous source (and on unmount).
+    return () => {
+      if (bufferTimer.current != null) {
+        window.clearTimeout(bufferTimer.current);
+        bufferTimer.current = undefined;
+      }
+    };
   }, [src]);
 
   const media = () => videoRef.current;
@@ -288,27 +337,35 @@ export function Player({ item, streamUrl, stats, info, onBack, onPlayEpisode }: 
               ref={videoRef}
               className="yt-video"
               src={src}
+              // Required so the loopback-served WebVTT <track>s (a different origin) load;
+              // the stream server sends Access-Control-Allow-Origin: * on every response.
+              crossOrigin="anonymous"
               autoPlay
               playsInline
               onClick={togglePlay}
               onError={handleError}
               onPlay={() => setPaused(false)}
               onPause={() => setPaused(true)}
-              onWaiting={() => setBuffering(true)}
-              onStalled={() => setBuffering(true)}
-              onPlaying={() => setBuffering(false)}
-              onCanPlay={() => setBuffering(false)}
+              onWaiting={markBuffering}
+              onStalled={markBuffering}
+              onPlaying={clearBuffering}
+              onCanPlay={clearBuffering}
               onTimeUpdate={(e) => {
                 setTime(e.currentTarget.currentTime);
                 // Time is advancing while not paused ⇒ definitely playing — clear the
-                // spinner even if onPlaying/onCanPlay didn't fire (WKWebView can be flaky).
-                if (!e.currentTarget.paused) setBuffering(false);
+                // spinner (and cancel any pending micro-buffer) even if onPlaying/onCanPlay
+                // didn't fire (WKWebView can be flaky).
+                if (!e.currentTarget.paused) clearBuffering();
               }}
               onDurationChange={(e) => setDuration(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0)}
               onLoadedMetadata={(e) => setDuration(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0)}
               onProgress={onProgress}
               onVolumeChange={(e) => { setVolume(e.currentTarget.volume); setMuted(e.currentTarget.muted); }}
-            />
+            >
+              {subs.map((s) => (
+                <track key={s.url} kind="subtitles" src={s.url} srcLang={s.lang || undefined} label={s.label} />
+              ))}
+            </video>
 
             {/* top scrim: back + title */}
             <div className="yt-top">
@@ -375,6 +432,32 @@ export function Player({ item, streamUrl, stats, info, onBack, onPlayEpisode }: 
                 <span className="yt-time">{fmtTime(time)} <span className="yt-time-dim">/ {fmtTime(duration)}</span></span>
                 {dlPct < 100 && <span className="yt-dl" title="Downloaded so far"><Icon icon={arrowDown} size="xs" />{dlPct}%</span>}
                 <div className="yt-spacer" />
+                {subs.length > 0 && (
+                  <div className="yt-sub-wrap">
+                    {subMenu && (
+                      <div className="yt-sub-menu" role="menu">
+                        <button className={`yt-sub-item${activeSub === -1 ? " on" : ""}`} onClick={() => { setActiveSub(-1); setSubMenu(false); }}>
+                          Off
+                        </button>
+                        {subs.map((s, i) => (
+                          <button key={s.url} className={`yt-sub-item${activeSub === i ? " on" : ""}`} onClick={() => { setActiveSub(i); setSubMenu(false); }}>
+                            {s.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      className={`yt-iconbtn${activeSub >= 0 ? " on" : ""}`}
+                      aria-label="Subtitles"
+                      title="Subtitles"
+                      aria-haspopup="menu"
+                      aria-expanded={subMenu}
+                      onClick={() => setSubMenu((o) => !o)}
+                    >
+                      <Icon icon={captions} size="base" />
+                    </button>
+                  </div>
+                )}
                 <button className={`yt-iconbtn${statsOpen ? " on" : ""}`} aria-label="Stats" title="Stats for nerds" onClick={() => setStatsOpen((s) => !s)}>
                   <Icon icon={gauge} size="base" />
                 </button>

@@ -121,6 +121,15 @@ pub struct MediaInfo {
     detail: String,
 }
 
+/// A subtitle track offered to the player, served as WebVTT from the loopback server.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SubTrack {
+    pub label: String,
+    pub lang: String,
+    pub url: String,
+}
+
 pub struct Engine {
     session: Arc<Session>,
     torrents: Torrents,
@@ -179,6 +188,8 @@ impl Engine {
             .route("/hls/{id}/{file}/{seg}", get(hls_segment_handler))
             .route("/localhls/{token}/index.m3u8", get(local_hls_playlist_handler))
             .route("/localhls/{token}/{seg}", get(local_hls_segment_handler))
+            .route("/subs/file/{token}", get(subs_file_handler))
+            .route("/subs/embed/{token}/{name}", get(subs_embed_handler))
             .route("/art/{id}", get(art_handler))
             .route("/file/{*relpath}", get(file_handler))
             .with_state(state)
@@ -277,6 +288,64 @@ impl Engine {
 
     pub async fn snapshot(&self) -> Vec<DownloadStats> {
         build_snapshot(&self.torrents, self.ffmpeg.is_some()).await
+    }
+
+    /// Subtitle tracks for a local video at relative path `rel`: sidecar .srt/.vtt/.ass
+    /// files in the same folder, plus text-based subtitle streams embedded in the
+    /// container (extracted to WebVTT on demand by `/subs/embed`). Image-based subs
+    /// (PGS/VOBSUB) can't become WebVTT, so they're skipped.
+    pub async fn list_subtitles(&self, rel: &str) -> Vec<SubTrack> {
+        let mut out = Vec::new();
+        let abs = self.download_dir.join(rel);
+        let stem = abs.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+
+        // 1) Sidecar subtitle files in the same directory.
+        if let Some(dir) = abs.parent() {
+            let lone_video = video_count(dir) <= 1;
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                let mut subs: Vec<PathBuf> = entries
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| matches!(file_ext(p).as_str(), "srt" | "vtt" | "ass" | "ssa"))
+                    .collect();
+                subs.sort();
+                for p in subs {
+                    let sub_stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+                    // Belongs to this video if it shares the name stem — or, in a folder with a
+                    // single video, any subtitle ("Movie/Movie.mkv" + "Movie/sub.srt").
+                    if !lone_video && !sub_stem.starts_with(&stem) {
+                        continue;
+                    }
+                    let Ok(sub_rel) = p.strip_prefix(&self.download_dir) else { continue };
+                    let sub_rel = sub_rel.to_string_lossy().replace('\\', "/");
+                    let lang = sub_lang(&sub_stem);
+                    out.push(SubTrack {
+                        label: sub_label(&sub_stem, &lang),
+                        lang,
+                        url: format!("http://127.0.0.1:{STREAM_PORT}/subs/file/{}", hls_token(&sub_rel)),
+                    });
+                }
+            }
+        }
+
+        // 2) Embedded text subtitle streams (ffprobe enumerates; ffmpeg extracts on demand).
+        if let Some(ffprobe) = &self.ffprobe {
+            for (n, lang, title) in probe_subtitle_streams(ffprobe, &abs).await {
+                let label = if !title.is_empty() {
+                    title
+                } else if !lang.is_empty() {
+                    format!("{} (embedded)", lang_label(&lang))
+                } else {
+                    format!("Track {}", n + 1)
+                };
+                out.push(SubTrack {
+                    label,
+                    lang,
+                    url: format!("http://127.0.0.1:{STREAM_PORT}/subs/embed/{}/{n}.vtt", hls_token(rel)),
+                });
+            }
+        }
+        out
     }
 
     pub async fn stats_for(&self, id: &str) -> Option<DownloadStats> {
@@ -1196,6 +1265,202 @@ fn content_type_for(name: &str) -> &'static str {
         Some("wav") => "audio/wav",
         Some("ogg") | Some("oga") => "audio/ogg",
         _ => "application/octet-stream",
+    }
+}
+
+// ---- subtitles (served as WebVTT for the player's <track> elements) ----
+
+fn file_ext(p: &Path) -> String {
+    p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).unwrap_or_default()
+}
+
+fn video_count(dir: &Path) -> usize {
+    std::fs::read_dir(dir)
+        .map(|es| {
+            es.flatten()
+                .filter(|e| e.path().file_name().and_then(|n| n.to_str()).map(|n| media_kind(n) == "video").unwrap_or(false))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+/// Pull a 2–3 letter language code off a subtitle filename stem ("movie.en" → "en").
+fn sub_lang(stem: &str) -> String {
+    if let Some(last) = stem.rsplit('.').next() {
+        if (2..=3).contains(&last.len()) && last.chars().all(|c| c.is_ascii_alphabetic()) && last != stem {
+            return last.to_lowercase();
+        }
+    }
+    String::new()
+}
+
+fn lang_label(lang: &str) -> String {
+    let name = match lang.to_lowercase().as_str() {
+        "en" | "eng" => "English",
+        "es" | "spa" => "Spanish",
+        "fr" | "fra" | "fre" => "French",
+        "de" | "ger" | "deu" => "German",
+        "it" | "ita" => "Italian",
+        "pt" | "por" => "Portuguese",
+        "ja" | "jpn" => "Japanese",
+        "ko" | "kor" => "Korean",
+        "zh" | "chi" | "zho" => "Chinese",
+        "ru" | "rus" => "Russian",
+        "ar" | "ara" => "Arabic",
+        "nl" | "dut" | "nld" => "Dutch",
+        "sv" | "swe" => "Swedish",
+        "pl" | "pol" => "Polish",
+        "" => "Subtitles",
+        other => return other.to_uppercase(),
+    };
+    name.to_string()
+}
+
+fn sub_label(stem: &str, lang: &str) -> String {
+    if !lang.is_empty() {
+        lang_label(lang)
+    } else {
+        // Last path component (no ext) as a friendly-ish label.
+        let base = stem.rsplit('/').next().unwrap_or(stem);
+        if base.is_empty() { "Subtitles".to_string() } else { base.to_string() }
+    }
+}
+
+/// Minimal SRT → WebVTT: prepend the header and turn the `,` in timestamp lines into `.`.
+/// Cue numbers and text pass through unchanged (WebVTT tolerates both).
+fn srt_to_vtt(srt: &str) -> String {
+    let srt = srt.trim_start_matches('\u{feff}'); // strip BOM
+    let mut out = String::with_capacity(srt.len() + 16);
+    out.push_str("WEBVTT\n\n");
+    for line in srt.lines() {
+        if line.contains("-->") {
+            out.push_str(&line.replace(',', "."));
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn vtt_response(vtt: String) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/vtt; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        vtt,
+    )
+        .into_response()
+}
+
+/// Run ffmpeg to convert a subtitle to WebVTT on stdout. `sub_idx` picks an embedded
+/// subtitle stream (`0:s:{idx}`); `None` converts a standalone subtitle file (e.g. .ass).
+async fn ffmpeg_to_vtt(ffmpeg: &Path, path: &Path, sub_idx: Option<usize>) -> Option<String> {
+    let mut cmd = tokio::process::Command::new(ffmpeg);
+    cmd.args(["-hide_banner", "-loglevel", "error", "-i"]).arg(path);
+    let map;
+    if let Some(i) = sub_idx {
+        map = format!("0:s:{i}");
+        cmd.args(["-map", &map]);
+    }
+    cmd.args(["-f", "webvtt", "-"]);
+    let out = cmd.output().await.ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let vtt = String::from_utf8_lossy(&out.stdout).to_string();
+    (!vtt.trim().is_empty()).then_some(vtt)
+}
+
+/// ffprobe a container for text-based subtitle streams → (subtitle-relative index, lang, title).
+async fn probe_subtitle_streams(ffprobe: &Path, path: &Path) -> Vec<(usize, String, String)> {
+    let out = tokio::process::Command::new(ffprobe)
+        .args([
+            "-v", "error",
+            "-select_streams", "s",
+            "-show_entries", "stream=codec_name:stream_tags=language,title",
+            "-of", "json",
+        ])
+        .arg(path)
+        .output()
+        .await;
+    let Ok(o) = out else { return Vec::new() };
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&o.stdout) else { return Vec::new() };
+    let mut res = Vec::new();
+    if let Some(streams) = v["streams"].as_array() {
+        for (n, st) in streams.iter().enumerate() {
+            let codec = st["codec_name"].as_str().unwrap_or("");
+            // Only text-based subs can become WebVTT; skip image subs (pgs/dvdsub/dvbsub).
+            if !matches!(codec, "subrip" | "srt" | "ass" | "ssa" | "mov_text" | "webvtt" | "text" | "stl" | "eia_608" | "subviewer") {
+                continue;
+            }
+            let lang = st["tags"]["language"].as_str().unwrap_or("").to_string();
+            let title = st["tags"]["title"].as_str().unwrap_or("").to_string();
+            res.push((n, lang, title));
+        }
+    }
+    res
+}
+
+/// Serve a sidecar subtitle file (`/subs/file/{hex-relpath}`) as WebVTT — .vtt passes
+/// through, .srt is converted in-process, .ass/.ssa go through ffmpeg.
+async fn subs_file_handler(
+    AxPath(token): AxPath<String>,
+    AxState(state): AxState<ServerState>,
+) -> Response {
+    let rel = match hex_decode(&token) {
+        Some(r) if !r.contains("..") => r,
+        _ => return (StatusCode::BAD_REQUEST, "bad token").into_response(),
+    };
+    let path = state.download_dir.join(&rel);
+    let ext = file_ext(&path);
+    let vtt = match ext.as_str() {
+        "vtt" => match tokio::fs::read(&path).await {
+            Ok(b) => String::from_utf8_lossy(&b).to_string(),
+            Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
+        },
+        "srt" => match tokio::fs::read(&path).await {
+            Ok(b) => srt_to_vtt(&String::from_utf8_lossy(&b)),
+            Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
+        },
+        "ass" | "ssa" => match &state.ffmpeg {
+            Some(ff) => match ffmpeg_to_vtt(ff, &path, None).await {
+                Some(v) => v,
+                None => return (StatusCode::INTERNAL_SERVER_ERROR, "convert failed").into_response(),
+            },
+            None => return (StatusCode::NOT_IMPLEMENTED, "ffmpeg required for .ass").into_response(),
+        },
+        _ => return (StatusCode::BAD_REQUEST, "unsupported subtitle").into_response(),
+    };
+    vtt_response(vtt)
+}
+
+/// Extract an embedded subtitle stream (`/subs/embed/{hex-relpath}/{idx}.vtt`) to WebVTT
+/// via ffmpeg.
+async fn subs_embed_handler(
+    AxPath((token, name)): AxPath<(String, String)>,
+    AxState(state): AxState<ServerState>,
+) -> Response {
+    let ffmpeg = match &state.ffmpeg {
+        Some(f) => f.clone(),
+        None => return (StatusCode::NOT_IMPLEMENTED, "ffmpeg not installed").into_response(),
+    };
+    let idx: usize = match name.strip_suffix(".vtt").and_then(|s| s.parse().ok()) {
+        Some(i) => i,
+        None => return (StatusCode::BAD_REQUEST, "bad stream").into_response(),
+    };
+    let rel = match hex_decode(&token) {
+        Some(r) if !r.contains("..") => r,
+        _ => return (StatusCode::BAD_REQUEST, "bad token").into_response(),
+    };
+    let path = state.download_dir.join(&rel);
+    if !tokio::fs::metadata(&path).await.map(|m| m.is_file()).unwrap_or(false) {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    }
+    match ffmpeg_to_vtt(&ffmpeg, &path, Some(idx)).await {
+        Some(vtt) => vtt_response(vtt),
+        None => (StatusCode::INTERNAL_SERVER_ERROR, "subtitle extract failed").into_response(),
     }
 }
 

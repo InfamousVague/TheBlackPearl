@@ -7,6 +7,7 @@
 // the cached list synchronously (instant paint, no spinner on revisit) and quietly
 // revalidate in the background. A single in-flight promise dedups concurrent refreshes.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { IN_TAURI } from "./engine";
 import { listDownloaded, type DownloadedItem } from "./library";
 
@@ -62,6 +63,22 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   // Warm the cache once on mount so the first tab opened is already populated.
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  // Auto-refresh so new content appears without a manual Refresh: when the backend's
+  // download-folder watcher fires (a download finished, files were organized/moved, etc.)
+  // and whenever the window regains focus. The refresh is deduped + render-free when
+  // nothing actually changed, so these are cheap.
+  useEffect(() => {
+    if (!IN_TAURI) return;
+    let un: (() => void) | undefined;
+    listen("library://changed", () => void refresh()).then((f) => (un = f));
+    const onFocus = () => void refresh();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      un?.();
+      window.removeEventListener("focus", onFocus);
+    };
   }, [refresh]);
 
   const value = useMemo(() => ({ items, refresh }), [items, refresh]);

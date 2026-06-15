@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "The Black Pearl",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.matt.ghosty",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "",
@@ -27,9 +28,22 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/InfamousVague/TheBlackPearl/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRFMThBRUEyOTlBNEJGQzEKUldUQnY2U1pvcTRZVGk3dytlTjFwVDdhY2Y1Qmh1TzRpcjM1SVpSdkxlVG9PTG43YUZWNzVEVncK",
+      "windows": { "installMode": "passive" }
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
+    "iOS": {
+      "minimumSystemVersion": "15.0"
+    },
     "macOS": {
       "minimumSystemVersion": "11.0",
       "entitlements": "Entitlements.plist",

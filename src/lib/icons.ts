@@ -53,6 +53,7 @@ export { server } from "@mattmattmattmatt/base/primitives/icon/icons/server";
 export { folder } from "@mattmattmattmatt/base/primitives/icon/icons/folder";
 export { circleCheck } from "@mattmattmattmatt/base/primitives/icon/icons/circle-check";
 export { circleAlert } from "@mattmattmattmatt/base/primitives/icon/icons/circle-alert";
+export { captions } from "@mattmattmattmatt/base/primitives/icon/icons/captions";
 export { activity } from "@mattmattmattmatt/base/primitives/icon/icons/activity";
 export { triangleAlert } from "@mattmattmattmatt/base/primitives/icon/icons/triangle-alert";
 export { compass } from "@mattmattmattmatt/base/primitives/icon/icons/compass";

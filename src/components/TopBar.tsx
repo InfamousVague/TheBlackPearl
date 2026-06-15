@@ -4,6 +4,7 @@ import { Spinner } from "@mattmattmattmatt/base/primitives/spinner/Spinner";
 import { IN_TAURI } from "../ipc/engine";
 import { vpnStatus, type VpnStatus } from "../ipc/library";
 import { circleCheck, panelLeftClose, panelLeftOpen, shieldCheck, shieldOff, triangleAlert } from "../lib/icons";
+import TipPopover from "./TipPopover";
 
 interface OrganizeChip {
   phase: string;
@@ -74,6 +75,9 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar, organize, onOrganize
           {vpn.active ? "VPN on" : "No VPN"}
         </span>
       )}
+      {/* Support tip jar — same heart-pill deck widget as libre.academy's nav,
+          restyled (.topbar-tip) to match the VPN / organize status chips. */}
+      <TipPopover label="Support" className="topbar-tip" />
     </div>
   );
 }

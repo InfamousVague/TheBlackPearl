@@ -59,6 +59,49 @@ pub struct TagApply {
     pub genre: Option<String>,
 }
 
+/// Resolve clean music tags for a file: existing embedded tags + the LLM (given that
+/// context), falling back to a filename/folder parse and backfilling blanks. Returns the
+/// tags plus whether the model (vs. the deterministic fallback) produced them. Shared by
+/// the tag pass and the organizer.
+pub async fn music_tags_for(
+    path: &Path,
+    client: &reqwest::Client,
+    model: Option<&str>,
+) -> (ai::MusicTags, bool) {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    let parent = path
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let existing = read_existing(path);
+
+    let mut ai_used = false;
+    let mut tags = match model {
+        Some(m) => match ai::parse_music(client, m, &context_for(parent, file_name, &existing)).await {
+            Ok(t) if !t.title.trim().is_empty() => {
+                ai_used = true;
+                t
+            }
+            _ => fallback(stem, parent),
+        },
+        None => fallback(stem, parent),
+    };
+
+    // Backfill blanks: deterministic parse first, then the file's own embedded tags.
+    let fb = fallback(stem, parent);
+    if tags.title.trim().is_empty() {
+        tags.title = fb.title;
+    }
+    tags.artist = clean_opt(tags.artist).or(fb.artist).or_else(|| existing.1.clone());
+    tags.album = clean_opt(tags.album).or(fb.album).or_else(|| existing.2.clone());
+    tags.track = tags.track.or(fb.track);
+    tags.year = tags.year.or(fb.year);
+    tags.genre = clean_opt(tags.genre);
+    (tags, ai_used)
+}
+
 /// Preview clean tags + legible names for every audio file under `root`. Read-only.
 /// `on_progress(done, total)` fires per file so the UI can show live progress.
 pub async fn plan(
@@ -81,37 +124,7 @@ pub async fn plan(
         on_progress(idx + 1, total);
         let path = PathBuf::from(&f.path);
         let ext = ext_of(&path);
-        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        let parent = path
-            .parent()
-            .and_then(|p| p.file_name())
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
-        let existing = read_existing(&path);
-
-        // Ask the model; fall back to a filename/folder parse if it's off or unhelpful.
-        let mut ai_used = false;
-        let mut tags = match model {
-            Some(m) => match ai::parse_music(client, m, &context_for(parent, &f.file_name, &existing)).await {
-                Ok(t) if !t.title.trim().is_empty() => {
-                    ai_used = true;
-                    t
-                }
-                _ => fallback(stem, parent),
-            },
-            None => fallback(stem, parent),
-        };
-
-        // Backfill anything the model left blank from the deterministic parse.
-        let fb = fallback(stem, parent);
-        if tags.title.trim().is_empty() {
-            tags.title = fb.title;
-        }
-        tags.artist = clean_opt(tags.artist).or(fb.artist);
-        tags.album = clean_opt(tags.album).or(fb.album);
-        tags.track = tags.track.or(fb.track);
-        tags.year = tags.year.or(fb.year);
-        tags.genre = clean_opt(tags.genre);
+        let (tags, ai_used) = music_tags_for(&path, client, model).await;
 
         let title = tags.title.trim().to_string();
         let legible = legible_name(tags.track, &title, &ext);
@@ -222,6 +235,40 @@ fn legible_name(track: Option<i64>, title: &str, ext: &str) -> String {
         Some(n) if n > 0 => format!("{n:02} - {t}.{ext}"),
         _ => format!("{t}.{ext}"),
     }
+}
+
+/// Embedded audio tags for the Music view's grouping. Once files are flattened into the
+/// library (e.g. `Library/Music/Track.flac`), the path carries no artist/album — the tags
+/// are the only surviving source, so the Music view groups by these.
+/// Returns artist, album, track number, title, and optional embedded artwork bytes.
+pub fn read_audio_tags(
+    path: &Path,
+) -> (Option<String>, Option<String>, Option<i64>, Option<String>, Option<Vec<u8>>) {
+    use lofty::file::TaggedFileExt;
+    use lofty::picture::PictureType;
+    use lofty::prelude::Accessor;
+    let clean = |s: String| {
+        let t = s.trim().to_string();
+        (!t.is_empty()).then_some(t)
+    };
+    if let Ok(tf) = lofty::read_from_path(path) {
+        if let Some(tag) = tf.primary_tag().or_else(|| tf.first_tag()) {
+            let art = tag
+                .pictures()
+                .iter()
+                .find(|p| matches!(p.pic_type(), PictureType::CoverFront))
+                .or_else(|| tag.pictures().first())
+                .map(|p| p.data().to_vec());
+            return (
+                tag.artist().and_then(|c| clean(c.to_string())),
+                tag.album().and_then(|c| clean(c.to_string())),
+                tag.track().map(|n| n as i64),
+                tag.title().and_then(|c| clean(c.to_string())),
+                art,
+            );
+        }
+    }
+    (None, None, None, None, None)
 }
 
 /// Read the file's current title/artist/album so the model has context to clean up.

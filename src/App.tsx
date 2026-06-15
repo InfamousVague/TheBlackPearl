@@ -17,6 +17,7 @@ import { Export } from "./views/Export";
 import { Automation } from "./views/Automation";
 import { SpotifyReplicate } from "./components/SpotifyReplicate";
 import { NowPlayingBar } from "./components/NowPlayingBar";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { usePlayer, type PlayerTrack } from "./ipc/player";
 import { OrganizePanel, type OrganizePhase } from "./components/OrganizePanel";
 import { organizeRun, onOrganizeProgress, type OrganizeResult, type OrganizeStep } from "./ipc/organize";
@@ -28,7 +29,9 @@ import {
   addSource,
   aiScan,
   aiStatus,
+  cleanTitles,
   fetchPosters,
+  getSetting,
   importFromBrowser,
   listCatalog,
   listDownloaded,
@@ -136,14 +139,19 @@ export default function App() {
   const [orgSteps, setOrgSteps] = useState<OrganizeStep[]>([]);
   const [orgResult, setOrgResult] = useState<OrganizeResult | null>(null);
   const [orgError, setOrgError] = useState<string | null>(null);
-  const orgRunning = orgPhase === "organizing";
+  const orgRunningRef = useRef(false);
 
   // Incremental organize: one streaming call that moves each download into the separate
   // Organized/ library file by file. Finished files survive a crash/stop, so re-running
-  // just resumes. The panel + top-bar chip track the live per-file progress.
-  async function startOrganize() {
-    setOrgOpen(true);
-    if (orgRunning) return; // already in flight — just reveal the panel
+  // just resumes. The panel + top-bar chip track the live per-file progress. `silent`
+  // (used by the auto-cleanup) runs it in the background without popping the panel open.
+  async function startOrganize(opts?: { silent?: boolean }) {
+    if (orgRunningRef.current) {
+      if (!opts?.silent) setOrgOpen(true); // already in flight — just reveal the panel
+      return;
+    }
+    orgRunningRef.current = true;
+    if (!opts?.silent) setOrgOpen(true);
     setOrgPhase("organizing");
     setOrgProgress({ done: 0, total: 0 });
     setOrgSteps([]);
@@ -157,6 +165,8 @@ export default function App() {
     } catch (e) {
       setOrgError(String(e));
       setOrgPhase("error");
+    } finally {
+      orgRunningRef.current = false;
     }
   }
 
@@ -196,6 +206,49 @@ export default function App() {
   const [refreshStatus, setRefreshStatus] = useState<string | null>(null);
 
   const [downloads, setDownloads] = useState<DownloadStats[]>([]);
+
+  // --- Auto-cleanup: organize + enrich downloads as they finish (enabled by default) ---
+  const dlProgressRef = useRef<Map<string, number>>(new Map());
+  const cleanupTimerRef = useRef<number | null>(null);
+
+  async function runAutoCleanup() {
+    if (orgRunningRef.current) {
+      scheduleCleanup(); // organize already running — retry once it's free
+      return;
+    }
+    const setting = await getSetting("auto_cleanup").catch(() => null);
+    if (setting === "false") return; // enabled by default when unset
+    await startOrganize({ silent: true }); // tidy new files into Organized/ (chip shows progress)
+    try {
+      await aiScan(60); // enrich: clean titles, posters, ratings, index
+    } catch {
+      /* enrich is best-effort */
+    }
+    refreshLibrary();
+    refreshCatalog();
+  }
+
+  function scheduleCleanup() {
+    if (cleanupTimerRef.current) window.clearTimeout(cleanupTimerRef.current);
+    // Debounce so a burst of completions triggers a single cleanup once things settle.
+    cleanupTimerRef.current = window.setTimeout(() => void runAutoCleanup(), 8000);
+  }
+
+  // Trigger only on an in-progress → complete transition observed this session, so the
+  // pre-existing backlog at launch isn't auto-organized (those are never seen mid-download).
+  useEffect(() => {
+    if (!IN_TAURI) return;
+    let justFinished = false;
+    for (const d of downloads) {
+      if (d.id.startsWith("local:")) continue;
+      const prev = dlProgressRef.current.get(d.id);
+      if (prev !== undefined && prev < 0.999 && d.progress >= 0.999) justFinished = true;
+      dlProgressRef.current.set(d.id, d.progress);
+    }
+    if (justFinished) scheduleCleanup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [downloads]);
+
   const [activeId, setActiveId] = useState<string | null>(null);
   const [streamItems, setStreamItems] = useState<Record<string, PlayerItem>>({});
   const [media, setMedia] = useState<MediaInfo | null>(null);
@@ -239,6 +292,61 @@ export default function App() {
     }
   }
 
+  // --- LLM title cleaning: messy release names → clean display titles, cached server-side
+  // and overlaid by id wherever items render. Progressive + bounded so search stays snappy.
+  const [cleanTitleMap, setCleanTitleMap] = useState<Map<string, string>>(new Map());
+  const cleanTitleRef = useRef<Map<string, string>>(new Map());
+  const cleanPending = useRef<Set<string>>(new Set());
+  const cleanBusy = useRef(false);
+
+  function requestCleanTitles(ids: string[]) {
+    if (!IN_TAURI) return;
+    let added = false;
+    for (const id of ids) {
+      if (id && !cleanTitleRef.current.has(id) && !cleanPending.current.has(id)) {
+        cleanPending.current.add(id);
+        added = true;
+      }
+    }
+    if (added) void drainCleanTitles();
+  }
+
+  async function drainCleanTitles() {
+    if (cleanBusy.current) return;
+    cleanBusy.current = true;
+    try {
+      while (cleanPending.current.size > 0) {
+        const batch = [...cleanPending.current].slice(0, 40);
+        const before = cleanTitleRef.current.size;
+        const r = await cleanTitles(batch, 10);
+        for (const [id, ct] of r.titles) {
+          cleanTitleRef.current.set(id, ct);
+          cleanPending.current.delete(id);
+        }
+        if (cleanTitleRef.current.size > before) setCleanTitleMap(new Map(cleanTitleRef.current));
+        // No progress (e.g. an id is no longer in the catalog) — drop the batch so we don't spin.
+        if (cleanTitleRef.current.size === before) for (const id of batch) cleanPending.current.delete(id);
+      }
+    } catch {
+      /* best-effort; ignore */
+    } finally {
+      cleanBusy.current = false;
+    }
+  }
+
+  // Clean search-result titles (the messy case) as soon as results arrive…
+  useEffect(() => {
+    requestCleanTitles(searchResults.map((it) => it.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchResults]);
+
+  // …and on the Discover home, clean the top of the catalog (what the carousels show).
+  useEffect(() => {
+    if (searchQuery) return; // the search effect covers active searches
+    requestCleanTitles(dbItems.slice(0, 48).map((it) => it.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dbItems, searchQuery]);
+
   async function handleScan() {
     if (!IN_TAURI || scanning) return;
     setScanning(true);
@@ -273,8 +381,13 @@ export default function App() {
   // Search hits enriched with the cached cover (and library meta) for display in
   // the Discover home — without this, freshly-searched items render no poster.
   const searchView = useMemo(
-    () => searchResults.map((it) => (it.poster ? it : { ...it, poster: posterById.get(it.id) })),
-    [searchResults, posterById],
+    () =>
+      searchResults.map((it) => ({
+        ...it,
+        poster: it.poster ?? posterById.get(it.id),
+        cleanTitle: cleanTitleMap.get(it.id) ?? it.cleanTitle,
+      })),
+    [searchResults, posterById, cleanTitleMap],
   );
 
   // Normalized title -> cached poster, so locally-downloaded files (which have no
@@ -324,7 +437,7 @@ export default function App() {
       const enriched: LibraryItem = m
         ? {
             ...it,
-            cleanTitle: m.cleanTitle,
+            cleanTitle: cleanTitleMap.get(it.id) ?? m.cleanTitle,
             mediaType: m.mediaType,
             imdbRating: m.imdbRating,
             rtRating: m.rtRating,
@@ -333,12 +446,12 @@ export default function App() {
             tags: m.tags,
             poster: it.poster ?? posterById.get(it.id) ?? m.poster,
           }
-        : ({ ...it, poster: it.poster ?? posterById.get(it.id) } as LibraryItem);
+        : ({ ...it, poster: it.poster ?? posterById.get(it.id), cleanTitle: cleanTitleMap.get(it.id) } as LibraryItem);
       const s = sectionOf(enriched);
       if (s !== "other") groups[s].push(enriched);
     }
     return groups;
-  }, [catalog, searchResults, libraryItems, posterById]);
+  }, [catalog, searchResults, libraryItems, posterById, cleanTitleMap]);
 
   // Section search: query every source but stay in the section (results are filtered
   // to the section's media type by the grouping above — that's the "bias toward type").
@@ -492,7 +605,7 @@ export default function App() {
     const id = `local:${item.id}`;
     setStreamItems((s) => ({
       ...s,
-      [id]: { title: item.title, kind: item.kind, poster: posterForTitle(item.title), url: item.url },
+      [id]: { title: item.title, kind: item.kind, poster: posterForTitle(item.title), url: item.url, relpath: item.id },
     }));
     setDownloads((d) =>
       upsert(d, { id, title: item.title, state: "ready", progress: 1, downSpeed: 0, upSpeed: 0, peers: 0, streamUrl: item.url }),
@@ -857,6 +970,7 @@ export default function App() {
       </div>
     </div>
       <NowPlayingBar />
+      <UpdateBanner />
       </LibraryProvider>
     </>
   );

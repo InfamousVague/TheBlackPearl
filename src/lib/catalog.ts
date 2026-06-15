@@ -27,6 +27,31 @@ export function streamFormat(title: string): "native" | "convert" {
   return "convert";
 }
 
+/**
+ * Instant, offline title clean — a JS mirror of the Rust `enrich::clean_title`. Strips
+ * dots/underscores and cuts at the first quality/year marker so a messy release name reads
+ * as a human title right away, before the sharper LLM-cleaned version arrives.
+ */
+export function cleanRelease(raw: string): string {
+  if (!raw) return raw;
+  let t = raw.replace(/[._]/g, " ");
+  const lower = t.toLowerCase();
+  let cut = t.length;
+  for (const m of [
+    "(", "[", "1080p", "720p", "2160p", "480p", "4k", "x264", "x265", "h264", "h265",
+    "hevc", "bluray", "blu-ray", "web-dl", "webrip", "web dl", "hdtv", "dvdrip", "brrip", "bdrip", "xvid",
+  ]) {
+    const i = lower.indexOf(m);
+    if (i > 0) cut = Math.min(cut, i);
+  }
+  const ym = t.match(/\b(?:19|20)\d{2}\b/);
+  if (ym && ym.index !== undefined && ym.index > 0) cut = Math.min(cut, ym.index);
+  const se = t.match(/\bS\d{1,2}\s?E\d{1,3}\b/i) ?? t.match(/\bSeason\s+\d+/i);
+  if (se && se.index !== undefined && se.index > 0) cut = Math.min(cut, se.index);
+  t = t.slice(0, cut).replace(/[\s\-–_]+$/, "").trim();
+  return t || raw.trim();
+}
+
 /** Stable hue derived from a string, used for placeholder poster gradients. */
 export function hueFromString(s: string): number {
   let h = 0;

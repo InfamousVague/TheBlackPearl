@@ -573,15 +573,19 @@ pub async fn search_source(
         return x1337_search(url, q, source_name, now).await;
     }
 
-    // scraper / adapter: try the Pirate Bay search shapes. TPB mirrors are JS front-ends,
-    // so query apibay's JSON API first; then the mirror's own (rarely-working) endpoints.
+    // scraper / adapter: try the Pirate Bay search shapes. ALWAYS try the configured
+    // host first — a self-hosted or DNS-proxied mirror (e.g. a legal-torrents fork) serves
+    // the modern apibay JSON at its own /q.php, and we must prefer that over the public API.
     let host = base_host(url);
     let mut candidates = vec![
-        format!("{host}/q.php?q={enc}"),       // modern apibay JSON
+        format!("{host}/q.php?q={enc}"),       // modern apibay JSON (incl. self-hosted forks)
         format!("{host}/search/{enc}/1/99/0"), // original server-rendered
     ];
+    // Last resort only: the real public TPB mirrors are JS front-ends with no server-side
+    // API, so their data actually comes from apibay.org. Appended (not prepended) so it
+    // never shadows the user's own host.
     if is_tpb(url) {
-        candidates.insert(0, format!("{APIBAY}/q.php?q={enc}"));
+        candidates.push(format!("{APIBAY}/q.php?q={enc}"));
     }
     for c in &candidates {
         if let Ok(body) = http_get(c).await {

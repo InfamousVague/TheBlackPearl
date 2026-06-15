@@ -1,5 +1,6 @@
 // IPC for the catalog + sources (backed by the Rust SQLite store / indexer).
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { CatalogItem, Category, SortKey, Source, SourceKind } from "../lib/types";
 import { IN_TAURI } from "./engine";
 
@@ -85,6 +86,99 @@ export function appInfo(): Promise<AppInfo> {
   return invoke<AppInfo>("app_info");
 }
 
+export interface MusicSpotiFlacStatus {
+  available: boolean;
+  command: string | null;
+  outputDir: string;
+  hint: string | null;
+}
+
+export interface MusicSpotiFlacResult {
+  command: string;
+  outputDir: string;
+  stdout: string;
+  stderr: string;
+}
+
+export interface MusicSpotiFlacInstallResult {
+  command: string;
+  resolvedCommand: string | null;
+  stdout: string;
+  stderr: string;
+}
+
+export interface MusicSpotiFlacOutput {
+  stream: "stdout" | "stderr" | "meta";
+  line: string;
+  completedFiles?: number | null;
+}
+
+export interface TidalAuthStatus {
+  hasClientId: boolean;
+  hasClientSecret: boolean;
+  hasRefreshToken: boolean;
+  hasAccessToken: boolean;
+  accessTokenExpiresAt: number | null;
+}
+
+export interface TidalAuthResult {
+  tokenType: string;
+  expiresIn: number;
+  accessTokenExpiresAt: number;
+  authMode: string;
+}
+
+export function musicSpotiFlacStatus(): Promise<MusicSpotiFlacStatus> {
+  return invoke<MusicSpotiFlacStatus>("music_spotiflac_status");
+}
+
+export function musicSpotiFlacInstall(): Promise<MusicSpotiFlacInstallResult> {
+  return invoke<MusicSpotiFlacInstallResult>("music_spotiflac_install");
+}
+
+export function musicSpotiFlacDownload(url: string, service: string, quality?: string): Promise<MusicSpotiFlacResult> {
+  return invoke<MusicSpotiFlacResult>("music_spotiflac_download", {
+    url,
+    service,
+    quality: quality ?? null,
+  });
+}
+
+export function onMusicSpotiFlacOutput(cb: (line: MusicSpotiFlacOutput) => void): Promise<() => void> {
+  if (!IN_TAURI) return Promise.resolve(() => {});
+  return listen<MusicSpotiFlacOutput>("spotiflac://output", (e) => cb(e.payload));
+}
+
+export function tidalAuthStatus(): Promise<TidalAuthStatus> {
+  return invoke<TidalAuthStatus>("tidal_auth_status");
+}
+
+export function tidalSaveCredentials(
+  clientId: string,
+  clientSecret: string,
+  refreshToken?: string | null,
+): Promise<TidalAuthStatus> {
+  return invoke<TidalAuthStatus>("tidal_save_credentials", {
+    clientId,
+    clientSecret,
+    refreshToken: refreshToken ?? null,
+  });
+}
+
+export function tidalClearCredentials(): Promise<TidalAuthStatus> {
+  return invoke<TidalAuthStatus>("tidal_clear_credentials");
+}
+
+export function tidalTestAuth(): Promise<TidalAuthResult> {
+  return invoke<TidalAuthResult>("tidal_test_auth");
+}
+
+export function tidalAuthorizeLogin(redirectUri?: string | null): Promise<TidalAuthResult> {
+  return invoke<TidalAuthResult>("tidal_authorize_login", {
+    redirectUri: redirectUri ?? null,
+  });
+}
+
 export interface VpnStatus {
   active: boolean;
   interface: string;
@@ -148,6 +242,20 @@ export function aiStatus(): Promise<AiStatus> {
 /** Organize + scan up to `limit` un-processed items (posters, ratings, tags). */
 export function aiScan(limit?: number): Promise<ScanResult> {
   return invoke<ScanResult>("ai_scan", { limit: limit ?? null });
+}
+
+export interface CleanTitlesResult {
+  /** [id, cleanTitle] for every requested id that now has a clean title. */
+  titles: [string, string][];
+  /** Requested ids still missing a clean title — call again to do more. */
+  remaining: number;
+  aiUsed: boolean;
+}
+
+/** LLM-clean (regex fallback) the messy titles of the given catalog ids, cached server-side.
+ *  Cache hits are free; up to `limit` uncached titles are cleaned per call. */
+export function cleanTitles(ids: string[], limit?: number): Promise<CleanTitlesResult> {
+  return invoke<CleanTitlesResult>("clean_titles", { ids, limit: limit ?? null });
 }
 
 /** Scanned items joined with their metadata — the Library view. */
@@ -251,6 +359,12 @@ export interface DownloadedItem {
   mediaType: "movie" | "show" | "music";
   season: number | null;
   episode: number | null;
+  /** Embedded audio tags (music only) — the Music view groups by these. */
+  artist: string | null;
+  album: string | null;
+  trackNo: number | null;
+  /** Embedded album artwork (music only), served from loopback /art. */
+  artworkUrl: string | null;
   sizeBytes: number;
   /** File mtime as epoch seconds — drives the "Recently added" feed. */
   addedAt: number;

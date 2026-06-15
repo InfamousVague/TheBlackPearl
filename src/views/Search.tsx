@@ -10,7 +10,7 @@ import type { CatalogItem, Category, SortKey } from "../lib/types";
 import type { LibraryItem } from "../ipc/library";
 import type { MediaSectionId } from "../lib/media";
 import { CATEGORY_LABEL, sortCatalog, streamFormat } from "../lib/catalog";
-import { arrowDownUp, history, link2, music, plus, search as searchIcon, trendingUp } from "../lib/icons";
+import { arrowDownUp, clapperboard, history, link2, music, plus, search as searchIcon, trendingUp, tv } from "../lib/icons";
 
 /** Strongest billboard candidate: prefer a poster + synopsis, then most-seeded. */
 function pickFeatured(pool: LibraryItem[]): LibraryItem | null {
@@ -49,6 +49,16 @@ const SORTS: { key: SortKey; label: string }[] = [
   { key: "recent", label: "Recent" },
 ];
 type FormatFilter = "all" | "native" | "convert";
+
+// Genre chips for the Discover home — each runs a live source search for that genre.
+const MOVIE_GENRES = [
+  "Action", "Comedy", "Drama", "Horror", "Sci-Fi", "Thriller",
+  "Romance", "Animation", "Documentary", "Crime", "Fantasy", "Western",
+];
+const TV_GENRES = [
+  "Drama", "Comedy", "Crime", "Sci-Fi", "Reality", "Documentary",
+  "Animation", "Fantasy", "Mystery", "Anime",
+];
 
 export function Search({
   query,
@@ -120,6 +130,7 @@ export function Search({
             value={value}
             onChange={(e) => setValue(e.currentTarget.value)}
             onKeyDown={(e) => e.key === "Enter" && submit()}
+            onClear={() => { setValue(""); onSearch(""); }}
           />
           <Button variant="primary" shape="pill" size="lg" icon={actionIcon} onClick={submit}>
             {actionLabel}
@@ -192,6 +203,26 @@ export function Search({
                 </div>
               </section>
             )}
+            <section className="search-sec">
+              <div className="search-sec-head">
+                <span className="search-sec-title"><Icon icon={clapperboard} size="sm" /> Movies by genre</span>
+              </div>
+              <div className="chip-row">
+                {MOVIE_GENRES.map((g) => (
+                  <button key={g} className="search-chip" onClick={() => onSearch(g)}>{g}</button>
+                ))}
+              </div>
+            </section>
+            <section className="search-sec">
+              <div className="search-sec-head">
+                <span className="search-sec-title"><Icon icon={tv} size="sm" /> TV by genre</span>
+              </div>
+              <div className="chip-row">
+                {TV_GENRES.map((g) => (
+                  <button key={g} className="search-chip" onClick={() => onSearch(g)}>{g}</button>
+                ))}
+              </div>
+            </section>
             <section className="search-sec">
               <div className="search-sec-head">
                 <span className="search-sec-title"><Icon icon={trendingUp} size="sm" /> Popular</span>
