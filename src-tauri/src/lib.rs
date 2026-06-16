@@ -540,6 +540,43 @@ fn app_info(info: tauri::State<'_, AppInfo>) -> AppInfo {
     info.inner().clone()
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayStatus {
+    url: String,
+    reachable: bool,
+    status: Option<u16>,
+    latency_ms: Option<u64>,
+}
+
+/// Liveness probe for The Black Pearl artwork relay (posters + album art). A quick,
+/// short-timeout GET to the relay's poster endpoint — any HTTP response means the
+/// relay is reachable; a transport error means it isn't. Surfaced in Settings.
+#[tauri::command]
+async fn relay_status() -> Result<RelayStatus, String> {
+    let base = posters::RELAY_BASE;
+    let url = format!("{base}/poster?type=movie&title=ping&year=2000");
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let started = std::time::Instant::now();
+    match client.get(&url).send().await {
+        Ok(resp) => Ok(RelayStatus {
+            url: base.to_string(),
+            reachable: resp.status().is_success() || resp.status().is_redirection(),
+            status: Some(resp.status().as_u16()),
+            latency_ms: Some(started.elapsed().as_millis() as u64),
+        }),
+        Err(_) => Ok(RelayStatus {
+            url: base.to_string(),
+            reachable: false,
+            status: None,
+            latency_ms: None,
+        }),
+    }
+}
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct MusicSpotiFlacStatus {
@@ -3461,6 +3498,7 @@ pub fn run() {
             tidal_test_auth,
             tidal_authorize_login,
             app_info,
+            relay_status,
             vpn_status,
             music_spotiflac_status,
             music_spotiflac_install,

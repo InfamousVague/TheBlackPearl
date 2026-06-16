@@ -199,7 +199,7 @@ pub async fn candidates(client: &reqwest::Client, title: &str, kind: &str) -> Ve
 /// resolved and cached server-side so no client needs an API key. The endpoints
 /// return image bytes directly, so a relay URL is usable anywhere a poster URL is
 /// (the UI and the local artwork cache fetch it like any other image).
-const RELAY_BASE: &str = "https://theblackpearl.tv/api";
+pub const RELAY_BASE: &str = "https://theblackpearl.tv/api";
 
 /// Build the relay poster URL for an item. Deterministic by title/year, so it's a
 /// stable value to persist and cache.

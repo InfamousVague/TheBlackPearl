@@ -86,6 +86,18 @@ export function appInfo(): Promise<AppInfo> {
   return invoke<AppInfo>("app_info");
 }
 
+/** Liveness of The Black Pearl artwork relay (posters/album art). */
+export interface RelayStatus {
+  url: string;
+  reachable: boolean;
+  status: number | null;
+  latencyMs: number | null;
+}
+
+export function relayStatus(): Promise<RelayStatus> {
+  return invoke<RelayStatus>("relay_status");
+}
+
 export interface MusicSpotiFlacStatus {
   available: boolean;
   command: string | null;

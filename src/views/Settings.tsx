@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "@mattmattmattmatt/base/primitives/icon/Icon";
 import { Card } from "@mattmattmattmatt/base/primitives/card/Card";
 import { Input } from "@mattmattmattmatt/base/primitives/input/Input";
@@ -10,31 +10,23 @@ import {
   clearCatalog,
   getSetting,
   pickFolder,
+  relayStatus,
   restartApp,
   setSetting,
   setStorageDir,
-  tidalAuthStatus,
-  tidalAuthorizeLogin,
-  tidalClearCredentials,
-  tidalSaveCredentials,
-  tidalTestAuth,
   type AiStatus,
   type AppInfo,
-  type TidalAuthStatus,
+  type RelayStatus,
 } from "../ipc/library";
-import { cpu, film, folderDown, folderOpen, hardDrive, rotateCw, sparkles } from "../lib/icons";
+import { circleCheck, cpu, download, film, folderDown, folderOpen, globe, hardDrive, info, rotateCw, server, sparkles, triangleAlert } from "../lib/icons";
 import { IS_IOS } from "../lib/platform";
+
+type UpdatePhase = "idle" | "checking" | "current" | "available" | "downloading" | "ready" | "error";
 
 export function Settings({ onCatalogChanged }: { onCatalogChanged: () => void }) {
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [tmdbKey, setTmdbKey] = useState("");
   const [omdbKey, setOmdbKey] = useState("");
-  const [tidalApiUrl, setTidalApiUrl] = useState("");
-  const [tidalClientId, setTidalClientId] = useState("");
-  const [tidalClientSecret, setTidalClientSecret] = useState("");
-  const [tidalRefreshToken, setTidalRefreshToken] = useState("");
-  const [tidalRedirectUri, setTidalRedirectUri] = useState("");
-  const [tidalAuth, setTidalAuth] = useState<TidalAuthStatus | null>(null);
   const [ai, setAi] = useState<AiStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState("");
@@ -43,6 +35,15 @@ export function Settings({ onCatalogChanged }: { onCatalogChanged: () => void })
   const [chosenDir, setChosenDir] = useState<string | null>(null);
   const [migrate, setMigrate] = useState(true);
   const [needsRestart, setNeedsRestart] = useState(false);
+  // Artwork relay liveness.
+  const [relay, setRelay] = useState<RelayStatus | null>(null);
+  const [relayChecking, setRelayChecking] = useState(false);
+  // Version + updater.
+  const [version, setVersion] = useState("");
+  const [upPhase, setUpPhase] = useState<UpdatePhase>("idle");
+  const [upMsg, setUpMsg] = useState("");
+  const [upPct, setUpPct] = useState(0);
+  const updateRef = useRef<{ version: string; downloadAndInstall: (cb: (e: ProgressEvent) => void) => Promise<void> } | null>(null);
 
   async function chooseFolder() {
     const dir = await pickFolder().catch(() => null);
@@ -64,101 +65,83 @@ export function Settings({ onCatalogChanged }: { onCatalogChanged: () => void })
     }
   }
 
+  async function checkRelay() {
+    if (!IN_TAURI) return;
+    setRelayChecking(true);
+    try {
+      setRelay(await relayStatus());
+    } catch {
+      setRelay(null);
+    } finally {
+      setRelayChecking(false);
+    }
+  }
+
   useEffect(() => {
     if (!IN_TAURI) return;
     appInfo().then(setInfo).catch(() => {});
     getSetting("tmdb_key").then((k) => setTmdbKey(k ?? "")).catch(() => {});
     getSetting("omdb_key").then((k) => setOmdbKey(k ?? "")).catch(() => {});
-    getSetting("spotiflac_tidal_api").then((k) => setTidalApiUrl(k ?? "")).catch(() => {});
-    getSetting("tidal_oauth_redirect_uri")
-      .then((k) => setTidalRedirectUri(k ?? "http://127.0.0.1:46171/tidal/callback"))
-      .catch(() => {});
     getSetting("auto_cleanup").then((v) => setAutoCleanup(v !== "false")).catch(() => {});
-    tidalAuthStatus().then(setTidalAuth).catch(() => {});
     aiStatus().then(setAi).catch(() => {});
+    void checkRelay();
+    import("@tauri-apps/api/app").then(({ getVersion }) => getVersion().then(setVersion)).catch(() => {});
   }, []);
 
-  async function saveTidalAppCreds() {
-    if (!IN_TAURI) return;
-    setBusy("tidal-save");
-    setStatus("");
+  async function checkUpdates() {
+    if (!IN_TAURI || IS_IOS) return;
+    setUpPhase("checking");
+    setUpMsg("");
     try {
-      const next = await tidalSaveCredentials(tidalClientId, tidalClientSecret, tidalRefreshToken.trim() || null);
-      setTidalAuth(next);
-      setTidalClientId("");
-      setTidalClientSecret("");
-      setTidalRefreshToken("");
-      setStatus(
-        next.hasRefreshToken
-          ? "TIDAL credentials and account refresh token saved to Keychain."
-          : "TIDAL app credentials saved to Keychain.",
-      );
-    } catch (e) {
-      setStatus(String(e));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function testTidalCreds() {
-    if (!IN_TAURI) return;
-    setBusy("tidal-test");
-    setStatus("");
-    try {
-      const res = await tidalTestAuth();
-      const next = await tidalAuthStatus();
-      setTidalAuth(next);
-      setStatus(
-        `TIDAL auth OK (${res.authMode.replace(/_/g, " ")}). ${res.tokenType} token valid for ${Math.max(1, Math.round(res.expiresIn / 60))} min.`,
-      );
-    } catch (e) {
-      setStatus(String(e));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function authorizeTidalLogin() {
-    if (!IN_TAURI) return;
-    setBusy("tidal-authorize");
-    setStatus("");
-    try {
-      if (tidalClientId.trim() && tidalClientSecret.trim()) {
-        await tidalSaveCredentials(tidalClientId, tidalClientSecret, null);
-        setTidalClientId("");
-        setTidalClientSecret("");
+      const { check } = await import("@tauri-apps/plugin-updater");
+      const update = await check();
+      if (!update) {
+        setUpPhase("current");
+        return;
       }
-      const redirect = tidalRedirectUri.trim() || "http://127.0.0.1:46171/tidal/callback";
-      await setSetting("tidal_oauth_redirect_uri", redirect);
-      const res = await tidalAuthorizeLogin(redirect);
-      const next = await tidalAuthStatus();
-      setTidalAuth(next);
-      setTidalRefreshToken("");
-      setStatus(
-        `TIDAL login complete (${res.authMode.replace(/_/g, " ")}). Refresh token saved to Keychain and ${res.tokenType} token valid for ${Math.max(1, Math.round(res.expiresIn / 60))} min.`,
-      );
+      updateRef.current = update as never;
+      setUpMsg(update.version);
+      setUpPhase("available");
     } catch (e) {
-      setStatus(String(e));
-    } finally {
-      setBusy(null);
+      setUpPhase("error");
+      setUpMsg(String(e));
     }
   }
 
-  async function clearTidalCreds() {
-    if (!IN_TAURI) return;
-    setBusy("tidal-clear");
-    setStatus("");
+  async function installUpdate() {
+    const update = updateRef.current;
+    if (!update) return;
+    setUpPhase("downloading");
+    setUpPct(0);
+    let total = 0;
+    let done = 0;
     try {
-      const next = await tidalClearCredentials();
-      setTidalAuth(next);
-      setTidalClientId("");
-      setTidalClientSecret("");
-      setTidalRefreshToken("");
-      setStatus("TIDAL app credentials cleared.");
+      await update.downloadAndInstall((ev) => {
+        const e = ev as unknown as { event: string; data?: { contentLength?: number; chunkLength?: number } };
+        if (e.event === "Started") total = e.data?.contentLength ?? 0;
+        else if (e.event === "Progress") {
+          done += e.data?.chunkLength ?? 0;
+          if (total > 0) setUpPct(Math.min(100, (done / total) * 100));
+        }
+      });
+      setUpPhase("ready");
     } catch (e) {
-      setStatus(String(e));
-    } finally {
-      setBusy(null);
+      setUpPhase("error");
+      setUpMsg(String(e));
+    }
+  }
+
+  async function restartForUpdate() {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("relaunch_for_update");
+    } catch {
+      try {
+        const { relaunch } = await import("@tauri-apps/plugin-process");
+        await relaunch();
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -177,7 +160,6 @@ export function Settings({ onCatalogChanged }: { onCatalogChanged: () => void })
     try {
       await setSetting("tmdb_key", tmdbKey.trim());
       await setSetting("omdb_key", omdbKey.trim());
-      await setSetting("spotiflac_tidal_api", tidalApiUrl.trim());
       setStatus("Settings saved. Run an AI scan from the Library to match posters and ratings.");
     } catch (e) {
       setStatus(String(e));
@@ -199,11 +181,52 @@ export function Settings({ onCatalogChanged }: { onCatalogChanged: () => void })
     }
   }
 
+  const relayColor = relay === null ? undefined : relay.reachable ? "var(--gg-success, #2f8f4e)" : "var(--gg-danger, #d85b5b)";
+
   return (
     <div className="section-stack">
       <div className="cat-header" style={{ marginBottom: 4 }}>
         <span className="cat-title">Settings</span>
       </div>
+
+      <Card variant="outlined" padding="lg">
+        <div className="settings-group">
+          <h4 className="settings-h"><Icon icon={info} size="sm" /> About &amp; updates</h4>
+          <div className="settings-row">
+            <span className="settings-label">Version</span>
+            <span className="settings-val">{version ? `The Black Pearl ${version}` : "—"}</span>
+          </div>
+          {IS_IOS ? (
+            <p className="field-hint">Updates are delivered through the App Store on iOS.</p>
+          ) : (
+            <>
+              {upPhase === "available" && <p className="field-hint" style={{ color: "var(--gg-accent)" }}>Update available — v{upMsg}</p>}
+              {upPhase === "current" && <p className="field-hint" style={{ color: "var(--gg-success, #2f8f4e)" }}>You&apos;re on the latest version.</p>}
+              {upPhase === "downloading" && (
+                <div style={{ height: 5, borderRadius: 3, background: "var(--gg-surface-2)", overflow: "hidden", margin: "8px 0 4px" }}>
+                  <span style={{ display: "block", height: "100%", width: `${upPct || 5}%`, background: "var(--gg-accent)", borderRadius: 3, transition: "width 180ms ease" }} />
+                </div>
+              )}
+              {upPhase === "ready" && <p className="field-hint" style={{ color: "var(--gg-success, #2f8f4e)" }}>Update installed — restart to apply.</p>}
+              {upPhase === "error" && <p className="field-hint" style={{ color: "var(--gg-danger, #d85b5b)" }}>{upMsg}</p>}
+              <div className="form-actions settings-actions">
+                {(upPhase === "idle" || upPhase === "current" || upPhase === "error") && (
+                  <Button variant="secondary" icon={rotateCw} loading={upPhase === "checking"} disabled={!IN_TAURI} onClick={checkUpdates}>Check for updates</Button>
+                )}
+                {upPhase === "available" && (
+                  <Button variant="primary" icon={download} onClick={installUpdate}>Install v{upMsg}</Button>
+                )}
+                {upPhase === "downloading" && (
+                  <Button variant="primary" loading disabled>Downloading…</Button>
+                )}
+                {upPhase === "ready" && (
+                  <Button variant="primary" icon={rotateCw} onClick={restartForUpdate}>Restart now</Button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </Card>
 
       <Card variant="outlined" padding="lg">
         <div className="settings-group">
@@ -257,7 +280,7 @@ export function Settings({ onCatalogChanged }: { onCatalogChanged: () => void })
             Organize &amp; enrich new downloads automatically
           </label>
           <p className="field-hint">
-            When a download finishes it's tidied into your Organized library (clean Plex-style
+            When a download finishes it&apos;s tidied into your Organized library (clean Plex-style
             folders, one per show or film) and enriched with posters, ratings and clean titles —
             no clicking required. Runs in the background; progress shows in the top bar.
           </p>
@@ -305,9 +328,8 @@ export function Settings({ onCatalogChanged }: { onCatalogChanged: () => void })
           <h4 className="settings-h">Posters, ratings &amp; music APIs</h4>
           <p className="field-hint">
             Optional API keys. OMDb adds IMDb and Rotten Tomatoes scores plus posters; TMDB is a
-            poster fallback. TIDAL downloads in the Music tab default to SpotiFLAC's community
-            mirror pool (no account required). Set a Tidal API URL only if you run your own
-            hifi-api instance.
+            poster fallback. Without keys, posters &amp; album art resolve through the keyless
+            artwork relay (below).
           </p>
           <div className="field">
             <label className="field-label">OMDb API key — IMDb + Rotten Tomatoes</label>
@@ -327,18 +349,6 @@ export function Settings({ onCatalogChanged }: { onCatalogChanged: () => void })
               onChange={(e) => setTmdbKey(e.currentTarget.value)}
             />
           </div>
-          <div className="field">
-            <label className="field-label">Tidal API URL — optional self-hosted override</label>
-            <Input
-              placeholder="https://your-hifi-api.example.com"
-              value={tidalApiUrl}
-              onChange={(e) => setTidalApiUrl(e.currentTarget.value)}
-            />
-            <p className="field-hint">
-              Passed to SpotiFLAC as <b>--tidal-api</b>. Leave blank to use SpotiFLAC's built-in
-              public mirror pool.
-            </p>
-          </div>
           <div className="form-actions settings-actions">
             <Button
               variant="primary"
@@ -352,129 +362,30 @@ export function Settings({ onCatalogChanged }: { onCatalogChanged: () => void })
         </div>
       </Card>
 
-      {!IS_IOS && (
       <Card variant="outlined" padding="lg">
         <div className="settings-group">
-          <h4 className="settings-h">TIDAL app auth</h4>
-          <p className="field-hint">
-            Store your TIDAL developer app credentials securely in macOS Keychain and optionally add an account refresh token for playback-grade auth.
-            This is optional advanced setup and is not required for the default SpotiFLAC community mirror mode.
-          </p>
-          <p className="field-hint">
-            If TIDAL login shows error 1002 or permission errors, skip OAuth and use default community mirrors, or set a custom self-hosted hifi-api URL above.
-          </p>
-          <div className="field">
-            <label className="field-label">Client ID</label>
-            <Input
-              placeholder={tidalAuth?.hasClientId ? "Saved in Keychain" : "TIDAL Client ID"}
-              value={tidalClientId}
-              onChange={(e) => setTidalClientId(e.currentTarget.value)}
-            />
-          </div>
-          <div className="field">
-            <label className="field-label">Client Secret</label>
-            <Input
-              type="password"
-              placeholder={tidalAuth?.hasClientSecret ? "Saved in Keychain" : "TIDAL Client Secret"}
-              value={tidalClientSecret}
-              onChange={(e) => setTidalClientSecret(e.currentTarget.value)}
-            />
-          </div>
-          <div className="field">
-            <label className="field-label">Refresh token (account token)</label>
-            <Input
-              type="password"
-              placeholder={tidalAuth?.hasRefreshToken ? "Saved in Keychain" : "Paste a TIDAL OAuth refresh token"}
-              value={tidalRefreshToken}
-              onChange={(e) => setTidalRefreshToken(e.currentTarget.value)}
-            />
-            <p className="field-hint">When present, Ghosty uses refresh-token auth for TIDAL playback lookups instead of app-only client credentials.</p>
-          </div>
-          <div className="field">
-            <label className="field-label">OAuth redirect URI</label>
-            <Input
-              placeholder="http://127.0.0.1:46171/tidal/callback"
-              value={tidalRedirectUri}
-              onChange={(e) => setTidalRedirectUri(e.currentTarget.value)}
-            />
-            <p className="field-hint">
-              Must exactly match your TIDAL app redirect URI. Ghosty listens on this localhost URL to capture the login code and save your refresh token.
-            </p>
-          </div>
+          <h4 className="settings-h"><Icon icon={server} size="sm" /> Connection</h4>
           <div className="settings-row">
-            <span className="settings-label">Stored credentials</span>
-            <span className="settings-val">
-              {tidalAuth == null
-                ? "—"
-                : tidalAuth.hasClientId && tidalAuth.hasClientSecret
-                  ? "Client ID + Secret saved"
-                  : "Not configured"}
-            </span>
-          </div>
-          <div className="settings-row">
-            <span className="settings-label">Stored refresh token</span>
-            <span className="settings-val">{tidalAuth?.hasRefreshToken ? "Present" : "None"}</span>
-          </div>
-          <div className="settings-row">
-            <span className="settings-label">Cached access token</span>
-            <span className="settings-val">
-              {tidalAuth?.hasAccessToken && tidalAuth.accessTokenExpiresAt
-                ? `Present until ${new Date(tidalAuth.accessTokenExpiresAt * 1000).toLocaleString()}`
-                : "None"}
+            <span className="settings-label"><Icon icon={globe} size="sm" /> Artwork relay</span>
+            <span className="settings-val" style={{ display: "inline-flex", alignItems: "center", gap: 6, color: relayColor }}>
+              {relay === null ? (
+                relayChecking ? "Checking…" : "—"
+              ) : relay.reachable ? (
+                <><Icon icon={circleCheck} size="sm" /> Connected{relay.latencyMs != null ? ` · ${relay.latencyMs} ms` : ""}</>
+              ) : (
+                <><Icon icon={triangleAlert} size="sm" /> Unreachable</>
+              )}
             </span>
           </div>
           <p className="field-hint">
-            A saved manual Tidal API URL still wins. Clear that override to return to SpotiFLAC's default public mirror pool.
+            <code className="mono-path">{relay?.url ?? "https://theblackpearl.tv/api"}</code> — the keyless poster &amp;
+            album-art relay. If it&apos;s down, artwork still resolves through your own OMDb/TMDB keys.
           </p>
           <div className="form-actions settings-actions">
-            <Button
-              variant="primary"
-              loading={busy === "tidal-save"}
-              disabled={
-                !IN_TAURI
-                || !(
-                  (tidalClientId.trim().length > 0 && tidalClientSecret.trim().length > 0)
-                  || (Boolean(tidalAuth?.hasClientId && tidalAuth?.hasClientSecret) && tidalRefreshToken.trim().length > 0)
-                )
-              }
-              onClick={saveTidalAppCreds}
-            >
-              Save TIDAL creds
-            </Button>
-            <Button
-              variant="secondary"
-              loading={busy === "tidal-authorize"}
-              disabled={
-                !IN_TAURI
-                || !(
-                  Boolean(tidalAuth?.hasClientId && tidalAuth?.hasClientSecret)
-                  || (tidalClientId.trim().length > 0 && tidalClientSecret.trim().length > 0)
-                )
-              }
-              onClick={authorizeTidalLogin}
-            >
-              Get refresh token
-            </Button>
-            <Button
-              variant="secondary"
-              loading={busy === "tidal-test"}
-              disabled={!IN_TAURI || !(tidalAuth?.hasClientId && tidalAuth?.hasClientSecret)}
-              onClick={testTidalCreds}
-            >
-              Test auth
-            </Button>
-            <Button
-              variant="ghost"
-              loading={busy === "tidal-clear"}
-              disabled={!IN_TAURI || !(tidalAuth?.hasClientId || tidalAuth?.hasClientSecret || tidalAuth?.hasAccessToken)}
-              onClick={clearTidalCreds}
-            >
-              Clear
-            </Button>
+            <Button variant="secondary" icon={rotateCw} loading={relayChecking} disabled={!IN_TAURI} onClick={checkRelay}>Recheck</Button>
           </div>
         </div>
       </Card>
-      )}
 
       <Card variant="outlined" padding="lg">
         <div className="settings-group">
