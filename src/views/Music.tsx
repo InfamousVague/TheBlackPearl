@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from "react";
 import { Icon } from "@mattmattmattmatt/base/primitives/icon/Icon";
 import { Button } from "@mattmattmattmatt/base/primitives/button/Button";
 import { Input } from "@mattmattmattmatt/base/primitives/input/Input";
+import { Chip } from "@mattmattmattmatt/base/primitives/chip/Chip";
+import { PosterRow } from "../components/PosterRow";
 import { PosterGridSkeleton } from "../components/Skeletons";
 import { useContextMenu, type MenuAction } from "../components/ContextMenu";
 import { IN_TAURI } from "../ipc/engine";
@@ -22,7 +24,9 @@ import { useDownloaded } from "../ipc/libraryCache";
 import { spotifyPlaylistPreview, type SpotifyTrack } from "../ipc/spotify";
 import { hueFromString } from "../lib/catalog";
 import { formatBytes } from "../lib/format";
-import { chevronLeft, circleCheck, circlePlay, disc3, download, folderOpen, library, link2, micVocal, music, rotateCw, trash2, triangleAlert } from "../lib/icons";
+import { chevronLeft, circleCheck, circlePlay, disc3, download, folderOpen, images, library, link2, micVocal, music, rotateCw, sparkles, trash2, triangleAlert } from "../lib/icons";
+import { IS_IOS } from "../lib/platform";
+import "./Music.css";
 
 interface MusicProps {
   /** Play a local audio file (single track). */
@@ -35,6 +39,7 @@ interface ParsedTrack {
   item: DownloadedItem;
   artist: string;
   album: string;
+  genre: string | null;
   track: string;
   trackNo: number;
   artworkUrl: string | null;
@@ -44,6 +49,7 @@ interface AlbumGroup {
   key: string;
   album: string;
   artist: string;
+  genre: string | null;
   tracks: ParsedTrack[];
   artworkUrl: string | null;
   addedAt: number;
@@ -51,10 +57,35 @@ interface AlbumGroup {
 
 interface ArtistGroup {
   name: string;
+  genre: string | null;
   albums: AlbumGroup[];
   trackCount: number;
   artworkUrl: string | null;
   addedAt: number;
+}
+
+interface GenreGroup {
+  name: string;
+  albums: AlbumGroup[];
+  artistCount: number;
+  trackCount: number;
+  addedAt: number;
+}
+
+/** Most-common non-empty genre among a set of tracks/albums. */
+function majorityGenre(genres: (string | null)[]): string | null {
+  const counts = new Map<string, number>();
+  for (const g of genres) {
+    if (!g) continue;
+    counts.set(g, (counts.get(g) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestN = 0;
+  for (const [g, n] of counts) if (n > bestN) {
+    best = g;
+    bestN = n;
+  }
+  return best;
 }
 
 interface SpotiFlacProgress {
@@ -69,6 +100,13 @@ interface ImportQueueItem {
   album: string;
   artworkUrl: string | null;
   imported: boolean;
+}
+
+const CONCURRENCY_CHOICES = [1, 2, 3, 4, 5, 6, 8] as const;
+
+function clampConcurrency(value: number): number {
+  if (!Number.isFinite(value)) return 2;
+  return Math.min(8, Math.max(1, Math.trunc(value)));
 }
 
 function parseSpotiFlacProgress(log: string[], busy: boolean, failed: boolean): SpotiFlacProgress {
@@ -129,6 +167,7 @@ function parseMusic(it: DownloadedItem): ParsedTrack {
     item: it,
     artist: it.artist?.trim() || "Unknown Artist",
     album: it.album?.trim() || "Singles",
+    genre: it.genre?.trim() || null,
     track: it.title?.trim() || it.fileName.replace(/\.[^.]+$/, ""),
     trackNo: it.trackNo && it.trackNo > 0 ? it.trackNo : 0,
     artworkUrl: it.artworkUrl?.trim() || null,
@@ -139,6 +178,7 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
   const { items: all, refresh } = useDownloaded();
   const [artistName, setArtistName] = useState<string | null>(null);
   const [albumKey, setAlbumKey] = useState<string | null>(null);
+  const [genreName, setGenreName] = useState<string | null>(null);
   const [spotiStatus, setSpotiStatus] = useState<MusicSpotiFlacStatus | null>(null);
   const [downloadUrl, setDownloadUrl] = useState("");
   const downloadService = "youtube";
@@ -153,7 +193,15 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
   const [expectedTracks, setExpectedTracks] = useState<SpotifyTrack[] | null>(null);
   const [expectedPlaylistName, setExpectedPlaylistName] = useState<string | null>(null);
   const [prefetchBusy, setPrefetchBusy] = useState(false);
+  const [downloadConcurrency, setDownloadConcurrency] = useState(2);
+  const downloadConcurrencyRef = useRef(2);
+  const queuePumpRef = useRef<(() => void) | null>(null);
   const ctx = useContextMenu();
+
+  useEffect(() => {
+    downloadConcurrencyRef.current = downloadConcurrency;
+    queuePumpRef.current?.();
+  }, [downloadConcurrency]);
 
   // Revalidate on mount; the cached list paints instantly so there's no spinner on revisit.
   useEffect(() => { void refresh(); }, [refresh]);
@@ -212,7 +260,7 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
       const imported = matched > 0;
       if (imported) remaining.set(key, matched - 1);
       return {
-        id: track.id ?? `${idx}-${key}`,
+        id: `${track.id ?? "track"}-${idx}`,
         title: track.name || "Unknown Track",
         artist: track.artist || "Unknown Artist",
         album: track.album || "",
@@ -266,7 +314,7 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
       const key = `${p.artist.toLowerCase()}|${p.album.toLowerCase()}`;
       let g = albumMap.get(key);
       if (!g) {
-        g = { key, album: p.album, artist: p.artist, tracks: [], artworkUrl: p.artworkUrl, addedAt: 0 };
+        g = { key, album: p.album, artist: p.artist, genre: null, tracks: [], artworkUrl: p.artworkUrl, addedAt: 0 };
         albumMap.set(key, g);
       }
       if (!g.artworkUrl && p.artworkUrl) g.artworkUrl = p.artworkUrl;
@@ -276,10 +324,11 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
     const artistMap = new Map<string, ArtistGroup>();
     for (const al of albumMap.values()) {
       al.tracks.sort((a, b) => a.trackNo - b.trackNo || a.track.localeCompare(b.track));
+      al.genre = majorityGenre(al.tracks.map((t) => t.genre));
       const ak = al.artist.toLowerCase();
       let ar = artistMap.get(ak);
       if (!ar) {
-        ar = { name: al.artist, albums: [], trackCount: 0, artworkUrl: al.artworkUrl, addedAt: 0 };
+        ar = { name: al.artist, genre: null, albums: [], trackCount: 0, artworkUrl: al.artworkUrl, addedAt: 0 };
         artistMap.set(ak, ar);
       }
       if (!ar.artworkUrl && al.artworkUrl) ar.artworkUrl = al.artworkUrl;
@@ -288,15 +337,53 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
       ar.addedAt = Math.max(ar.addedAt, al.addedAt);
     }
     const list = [...artistMap.values()];
-    for (const ar of list) ar.albums.sort((a, b) => b.addedAt - a.addedAt);
+    for (const ar of list) {
+      ar.albums.sort((a, b) => b.addedAt - a.addedAt);
+      ar.genre = majorityGenre(ar.albums.map((a) => a.genre));
+    }
     list.sort((a, b) => a.name.localeCompare(b.name));
     return list;
   }, [items]);
 
   const allAlbums = useMemo(() => artists.flatMap((a) => a.albums), [artists]);
 
+  // ---- iTunes-style browse derivations ----
+  const recentAlbums = useMemo(
+    () => [...allAlbums].sort((a, b) => b.addedAt - a.addedAt).slice(0, 18),
+    [allAlbums],
+  );
+  const albumsByName = useMemo(
+    () => [...allAlbums].sort((a, b) => a.album.localeCompare(b.album)),
+    [allAlbums],
+  );
+  // The featured billboard: the most complete recent album reads best.
+  const featured = useMemo(
+    () => [...allAlbums].sort((a, b) => b.tracks.length - a.tracks.length || b.addedAt - a.addedAt)[0] ?? null,
+    [allAlbums],
+  );
+  const genres = useMemo(() => {
+    const m = new Map<string, GenreGroup & { artists: Set<string> }>();
+    for (const al of allAlbums) {
+      const name = al.genre || "Other";
+      const lk = name.toLowerCase();
+      let g = m.get(lk);
+      if (!g) {
+        g = { name, albums: [], artistCount: 0, trackCount: 0, addedAt: 0, artists: new Set() };
+        m.set(lk, g);
+      }
+      g.albums.push(al);
+      g.artists.add(al.artist.toLowerCase());
+      g.trackCount += al.tracks.length;
+      g.addedAt = Math.max(g.addedAt, al.addedAt);
+    }
+    return [...m.values()]
+      .map((g) => ({ name: g.name, albums: g.albums, artistCount: g.artists.size, trackCount: g.trackCount, addedAt: g.addedAt }))
+      .sort((a, b) => b.albums.length - a.albums.length || a.name.localeCompare(b.name));
+  }, [allAlbums]);
+
   const artist = artistName ? artists.find((a) => a.name.toLowerCase() === artistName.toLowerCase()) ?? null : null;
   const album = albumKey ? allAlbums.find((a) => a.key === albumKey) ?? null : null;
+  const selectedGenre = genreName ? genres.find((g) => g.name.toLowerCase() === genreName.toLowerCase()) ?? null : null;
 
   function trackActions(p: ParsedTrack): MenuAction[] {
     return [
@@ -305,6 +392,99 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
       { label: "Remove from library", icon: library, divider: true, onSelect: () => void removeFromLibrary(p.item.id).then(() => refresh()) },
       { label: "Move to Trash", icon: trash2, danger: true, onSelect: () => void trashDownloaded(p.item.id).then(() => refresh()) },
     ];
+  }
+
+  // Manage a whole album (all its tracks) from a right-click on its cover.
+  function albumActions(al: AlbumGroup): MenuAction[] {
+    const ids = al.tracks.map((t) => t.item.id);
+    const actions: MenuAction[] = [
+      { label: "Play album", icon: circlePlay, onSelect: () => onPlayLocal(al.tracks[0].item) },
+      { label: "Reveal in Finder", icon: folderOpen, onSelect: () => void revealPath(ids[0]) },
+    ];
+    if (onReplacePoster) actions.push({ label: "Replace cover…", icon: images, onSelect: () => onReplacePoster(al.album) });
+    actions.push(
+      { label: "Remove album from library", icon: library, divider: true, onSelect: () => void Promise.all(ids.map((id) => removeFromLibrary(id))).then(() => refresh()) },
+      { label: "Move album to Trash", icon: trash2, danger: true, onSelect: () => void Promise.all(ids.map((id) => trashDownloaded(id))).then(() => refresh()) },
+    );
+    return actions;
+  }
+
+  // Manage a whole artist (every track across their albums) from a right-click on the bubble.
+  function artistActions(ar: ArtistGroup): MenuAction[] {
+    const tracks = ar.albums.flatMap((al) => al.tracks);
+    const ids = tracks.map((t) => t.item.id);
+    const actions: MenuAction[] = [
+      { label: "Play", icon: circlePlay, onSelect: () => onPlayLocal(tracks[0].item) },
+      { label: "Reveal in Finder", icon: folderOpen, onSelect: () => void revealPath(ids[0]) },
+    ];
+    if (onReplacePoster) actions.push({ label: "Replace image…", icon: images, onSelect: () => onReplacePoster(ar.name) });
+    actions.push(
+      { label: `Remove artist from library`, icon: library, divider: true, onSelect: () => void Promise.all(ids.map((id) => removeFromLibrary(id))).then(() => refresh()) },
+      { label: "Move artist to Trash", icon: trash2, danger: true, onSelect: () => void Promise.all(ids.map((id) => trashDownloaded(id))).then(() => refresh()) },
+    );
+    return actions;
+  }
+
+  async function runQueuedSpotifyTracks(tracks: SpotifyTrack[]) {
+    const entries = tracks
+      .map((track, idx) => ({
+        id: track.id ?? String(idx),
+        title: track.name || `Track ${idx + 1}`,
+        url: track.url?.trim() ?? "",
+      }))
+      .filter((entry) => entry.url.length > 0);
+
+    if (entries.length === 0) {
+      throw new Error("No direct Spotify track URLs were available for this playlist.");
+    }
+
+    const failures: string[] = [];
+    let next = 0;
+    let active = 0;
+
+    await new Promise<void>((resolve) => {
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        queuePumpRef.current = null;
+        resolve();
+      };
+
+      const pump = () => {
+        if (finished) return;
+        const limit = clampConcurrency(downloadConcurrencyRef.current);
+        while (active < limit && next < entries.length) {
+          const entry = entries[next++];
+          active += 1;
+          void musicSpotiFlacDownload(entry.url, downloadService, "LOSSLESS")
+            .catch((err) => {
+              failures.push(`${entry.title}: ${String(err)}`);
+            })
+            .finally(() => {
+              active -= 1;
+              void refresh();
+              if (next >= entries.length && active === 0) {
+                finish();
+                return;
+              }
+              pump();
+            });
+        }
+        if (next >= entries.length && active === 0) {
+          finish();
+        }
+      };
+
+      queuePumpRef.current = pump;
+      pump();
+    });
+
+    if (failures.length > 0) {
+      const failed = failures.length;
+      const ok = entries.length - failed;
+      throw new Error(`Imported ${ok} of ${entries.length} tracks. ${failed} failed.`);
+    }
   }
 
   async function runSpotiFlac(urlOverride?: string) {
@@ -321,12 +501,16 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
     setDownloadSessionBaseIds(baselineIds);
     setExpectedTracks(null);
     setExpectedPlaylistName(null);
+    let prefetchedTracks: SpotifyTrack[] | null = null;
+    let canRunConcurrentQueue = false;
     if (targetUrl.includes("open.spotify.com/playlist/") || targetUrl.includes("spotify:playlist:")) {
       setPrefetchBusy(true);
       try {
         const preview = await spotifyPlaylistPreview(targetUrl);
         setExpectedTracks(preview.tracks);
         setExpectedPlaylistName(preview.playlist);
+        prefetchedTracks = preview.tracks;
+        canRunConcurrentQueue = preview.tracks.length > 0 && preview.tracks.every((track) => Boolean(track.url?.trim()));
       } catch {
         // Prefetch is best-effort; importing still continues.
       } finally {
@@ -334,13 +518,18 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
       }
     }
     try {
-      await musicSpotiFlacDownload(targetUrl, downloadService, "LOSSLESS");
+      if (canRunConcurrentQueue && prefetchedTracks) {
+        await runQueuedSpotifyTracks(prefetchedTracks);
+      } else {
+        await musicSpotiFlacDownload(targetUrl, downloadService, "LOSSLESS");
+      }
       setDownloadDone(true);
       setDownloadUrl("");
       await refresh();
     } catch (e) {
       setDownloadError(String(e));
     } finally {
+      queuePumpRef.current = null;
       setDownloadBusy(false);
     }
   }
@@ -446,7 +635,7 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
         </div>
         <div className="cat-grid">
           {artist.albums.map((al) => (
-            <AlbumCard key={al.key} album={al} onClick={() => setAlbumKey(al.key)} />
+            <AlbumCard key={al.key} album={al} onClick={() => setAlbumKey(al.key)} onContextMenu={(e) => ctx.open(e, albumActions(al))} />
           ))}
         </div>
         {ctx.menu}
@@ -454,7 +643,40 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
     );
   }
 
-  // ---- artists grid (top level) ----
+  // ---- genre detail (artists + albums in a genre) ----
+  if (selectedGenre) {
+    const genreArtists = artists.filter((a) =>
+      selectedGenre.albums.some((al) => al.artist.toLowerCase() === a.name.toLowerCase()),
+    );
+    const genreAlbums = [...selectedGenre.albums].sort((a, b) => b.addedAt - a.addedAt);
+    return (
+      <div className="section-stack media-wide">
+        <button className="series-back" onClick={() => setGenreName(null)}><Icon icon={chevronLeft} size="sm" /> All music</button>
+        <div className="cat-header">
+          <span className="cat-title section-title"><Icon icon={sparkles} size="base" /> {selectedGenre.name}</span>
+          <span className="cat-sub">
+            {selectedGenre.albums.length} album{selectedGenre.albums.length === 1 ? "" : "s"} · {selectedGenre.artistCount} artist{selectedGenre.artistCount === 1 ? "" : "s"}
+          </span>
+        </div>
+        {genreArtists.length > 0 && (
+          <PosterRow title="Artists" count={genreArtists.length}>
+            {genreArtists.map((a) => (
+              <ArtistCard key={a.name} artist={a} onClick={() => { setGenreName(null); setArtistName(a.name); }} onContextMenu={(e) => ctx.open(e, artistActions(a))} />
+            ))}
+          </PosterRow>
+        )}
+        <h2 className="prow-title music-grid-title"><Icon icon={disc3} size="sm" /> Albums</h2>
+        <div className="cat-grid">
+          {genreAlbums.map((al) => (
+            <AlbumCard key={al.key} album={al} onClick={() => setAlbumKey(al.key)} onContextMenu={(e) => ctx.open(e, albumActions(al))} />
+          ))}
+        </div>
+        {ctx.menu}
+      </div>
+    );
+  }
+
+  // ---- browse home (iTunes-style: featured + rows + genres) ----
   return (
     <div className="section-stack media-wide">
       <div className="cat-header">
@@ -465,6 +687,7 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
         </div>
       </div>
 
+      {!IS_IOS ? (
       <div>
         <div className="settings-group">
           <div className="search-bar-lg">
@@ -491,6 +714,25 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
             </Button>
           </div>
           <div className="form-actions">
+            <label className="field-hint" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              Concurrent downloads
+              <select
+                value={downloadConcurrency}
+                onChange={(e) => setDownloadConcurrency(clampConcurrency(parseInt(e.currentTarget.value, 10)))}
+                style={{
+                  minWidth: 74,
+                  borderRadius: 8,
+                  border: "1px solid color-mix(in srgb, var(--outline-variant, rgba(255,255,255,0.12)) 100%, transparent)",
+                  background: "var(--surface-1, rgba(255,255,255,0.04))",
+                  color: "var(--text, #fff)",
+                  padding: "6px 8px",
+                }}
+              >
+                {CONCURRENCY_CHOICES.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </label>
             {!spotiStatus?.available && (
               <Button
                 variant="secondary"
@@ -516,45 +758,47 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
               ) : visibleQueue.length === 0 ? (
                 <p className="field-hint">Preparing tracks...</p>
               ) : (
-                <div style={{ display: "grid", gap: 10 }}>
-                  {visibleQueue.slice(0, 24).map((item) => (
-                    <div
-                      key={item.id}
-                      style={{
-                        display: "grid",
-                        gap: 12,
-                        gridTemplateColumns: "52px minmax(0, 1fr) auto",
-                        alignItems: "center",
-                        padding: 10,
-                        borderRadius: 12,
-                        border: "1px solid color-mix(in srgb, var(--outline-variant, rgba(255,255,255,0.12)) 100%, transparent)",
-                        background: "color-mix(in srgb, var(--surface-1, rgba(255,255,255,0.04)) 100%, transparent)",
-                      }}
-                    >
+                <div style={{ maxHeight: 360, overflowY: "auto", paddingRight: 6 }}>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {visibleQueue.map((item) => (
                       <div
+                        key={item.id}
                         style={{
-                          width: 52,
-                          height: 52,
-                          borderRadius: 10,
-                          overflow: "hidden",
                           display: "grid",
-                          placeItems: "center",
-                          background: `linear-gradient(150deg, hsl(${hueFromString(`${item.artist} ${item.album}`)} 32% 24%), hsl(${(hueFromString(`${item.artist} ${item.album}`) + 40) % 360} 42% 13%))`,
+                          gap: 12,
+                          gridTemplateColumns: "52px minmax(0, 1fr) auto",
+                          alignItems: "center",
+                          padding: 10,
+                          borderRadius: 12,
+                          border: "1px solid color-mix(in srgb, var(--outline-variant, rgba(255,255,255,0.12)) 100%, transparent)",
+                          background: "color-mix(in srgb, var(--surface-1, rgba(255,255,255,0.04)) 100%, transparent)",
                         }}
                       >
-                        {item.artworkUrl ? <img src={item.artworkUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Icon icon={disc3} size="base" />}
-                      </div>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={item.title}>{item.title}</div>
-                        <div className="field-hint" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`${item.artist} · ${item.album}`}>
-                          {[item.artist, item.album].filter(Boolean).join(" · ")}
+                        <div
+                          style={{
+                            width: 52,
+                            height: 52,
+                            borderRadius: 10,
+                            overflow: "hidden",
+                            display: "grid",
+                            placeItems: "center",
+                            background: `linear-gradient(150deg, hsl(${hueFromString(`${item.artist} ${item.album}`)} 32% 24%), hsl(${(hueFromString(`${item.artist} ${item.album}`) + 40) % 360} 42% 13%))`,
+                          }}
+                        >
+                          {item.artworkUrl ? <img src={item.artworkUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Icon icon={disc3} size="base" />}
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={item.title}>{item.title}</div>
+                          <div className="field-hint" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`${item.artist} · ${item.album}`}>
+                            {[item.artist, item.album].filter(Boolean).join(" · ")}
+                          </div>
+                        </div>
+                        <div style={{ justifySelf: "end", color: item.imported ? "var(--gg-success, #2f8f4e)" : "var(--gg-text-dim)" }}>
+                          {item.imported ? "Added" : "Queued"}
                         </div>
                       </div>
-                      <div style={{ justifySelf: "end", color: item.imported ? "var(--gg-success, #2f8f4e)" : "var(--gg-text-dim)" }}>
-                        {item.imported ? "Added" : "Queued"}
-                      </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -573,6 +817,13 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
           {spotiStatus?.hint && <p className="field-hint">{spotiStatus.hint}</p>}
         </div>
       </div>
+      ) : (
+        <div className="settings-group">
+          <p className="field-hint">
+            <Icon icon={download} size="sm" /> Find and download music under <b>Discover</b> — search an album or artist and add it. (Lossless FLAC won&apos;t play on iPad; MP3, AAC, ALAC and WAV do.)
+          </p>
+        </div>
+      )}
 
       {loading ? (
         <PosterGridSkeleton square />
@@ -585,10 +836,47 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
           </div>
         </div>
       ) : (
-        <div className="cat-grid">
-          {artists.map((a) => (
-            <ArtistCard key={a.name} artist={a} onClick={() => setArtistName(a.name)} />
-          ))}
+        <div className="music-browse">
+          {featured && (
+            <MusicHero
+              album={featured}
+              onPlay={() => onPlayLocal(featured.tracks[0].item)}
+              onArtist={() => setArtistName(featured.artist)}
+            />
+          )}
+          {recentAlbums.length > 0 && (
+            <PosterRow title="Recently Added" count={recentAlbums.length}>
+              {recentAlbums.map((al) => (
+                <AlbumCard key={al.key} album={al} onClick={() => setAlbumKey(al.key)} onContextMenu={(e) => ctx.open(e, albumActions(al))} />
+              ))}
+            </PosterRow>
+          )}
+          {artists.length > 0 && (
+            <PosterRow title="Artists" count={artists.length}>
+              {artists.map((a) => (
+                <ArtistCard key={a.name} artist={a} onClick={() => setArtistName(a.name)} onContextMenu={(e) => ctx.open(e, artistActions(a))} />
+              ))}
+            </PosterRow>
+          )}
+          {albumsByName.length > 0 && (
+            <PosterRow title="Albums" count={albumsByName.length}>
+              {albumsByName.map((al) => (
+                <AlbumCard key={al.key} album={al} onClick={() => setAlbumKey(al.key)} onContextMenu={(e) => ctx.open(e, albumActions(al))} />
+              ))}
+            </PosterRow>
+          )}
+          {genres.length > 0 && (
+            <section className="prow">
+              <div className="prow-head">
+                <h2 className="prow-title">Genres<span className="prow-count">{genres.length}</span></h2>
+              </div>
+              <div className="genre-tiles">
+                {genres.map((g) => (
+                  <GenreTile key={g.name} genre={g} onClick={() => setGenreName(g.name)} />
+                ))}
+              </div>
+            </section>
+          )}
         </div>
       )}
       {ctx.menu}
@@ -596,11 +884,53 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
   );
 }
 
-function ArtistCard({ artist, onClick }: { artist: ArtistGroup; onClick: () => void }) {
+function MusicHero({ album, onPlay, onArtist }: { album: AlbumGroup; onPlay: () => void; onArtist: () => void }) {
+  const hue = hueFromString(album.album);
+  const bg = `linear-gradient(150deg, hsl(${hue} 34% 26%), hsl(${(hue + 40) % 360} 44% 14%))`;
+  return (
+    <div className="music-hero">
+      <div className="music-hero-wash" style={{ background: bg }} aria-hidden />
+      {album.artworkUrl && <div className="music-hero-bg" style={{ backgroundImage: `url(${album.artworkUrl})` }} aria-hidden />}
+      <div className="music-hero-scrim" aria-hidden />
+      <div className="music-hero-inner">
+        <div className="music-hero-art" style={{ background: bg }}>
+          {album.artworkUrl ? <img src={album.artworkUrl} alt="" /> : <Icon icon={disc3} size="2xl" />}
+        </div>
+        <div className="music-hero-body">
+          <span className="hero-kicker">Featured Album</span>
+          <h1 className="music-hero-title" title={album.album}>{album.album}</h1>
+          <button className="music-hero-artist" onClick={onArtist}><Icon icon={micVocal} size="xs" /> {album.artist}</button>
+          <div className="music-hero-meta">
+            {album.genre && <Chip size="sm" variant="filled">{album.genre}</Chip>}
+            <span className="music-hero-tracks"><Icon icon={music} size="xs" /> {album.tracks.length} track{album.tracks.length === 1 ? "" : "s"}</span>
+          </div>
+          <div className="form-actions" style={{ marginTop: 16 }}>
+            <Button variant="primary" icon={circlePlay} onClick={onPlay}>Play</Button>
+            <Button variant="ghost" onClick={onArtist}>View artist</Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GenreTile({ genre, onClick }: { genre: GenreGroup; onClick: () => void }) {
+  const hue = hueFromString(genre.name);
+  const bg = `linear-gradient(135deg, hsl(${hue} 52% 34%), hsl(${(hue + 55) % 360} 58% 20%))`;
+  return (
+    <button className="genre-tile" style={{ background: bg }} onClick={onClick}>
+      <span className="genre-tile-name">{genre.name}</span>
+      <span className="genre-tile-count">{genre.albums.length} album{genre.albums.length === 1 ? "" : "s"} · {genre.artistCount} artist{genre.artistCount === 1 ? "" : "s"}</span>
+      <span className="genre-tile-glyph" aria-hidden><Icon icon={disc3} size="xl" /></span>
+    </button>
+  );
+}
+
+function ArtistCard({ artist, onClick, onContextMenu }: { artist: ArtistGroup; onClick: () => void; onContextMenu?: (e: MouseEvent) => void }) {
   const hue = hueFromString(artist.name);
   const bg = `linear-gradient(150deg, hsl(${hue} 32% 24%), hsl(${(hue + 40) % 360} 42% 13%))`;
   return (
-    <div className="poster-card" onClick={onClick} role="button" tabIndex={0}>
+    <div className="poster-card" onClick={onClick} onContextMenu={onContextMenu} role="button" tabIndex={0}>
       <div className="poster square round" style={{ background: bg }}>
         {artist.artworkUrl ? (
           <img className="poster-img" src={artist.artworkUrl} alt="" />
@@ -616,11 +946,11 @@ function ArtistCard({ artist, onClick }: { artist: ArtistGroup; onClick: () => v
   );
 }
 
-function AlbumCard({ album, onClick }: { album: AlbumGroup; onClick: () => void }) {
+function AlbumCard({ album, onClick, onContextMenu }: { album: AlbumGroup; onClick: () => void; onContextMenu?: (e: MouseEvent) => void }) {
   const hue = hueFromString(album.album);
   const bg = `linear-gradient(150deg, hsl(${hue} 32% 24%), hsl(${(hue + 40) % 360} 42% 13%))`;
   return (
-    <div className="poster-card" onClick={onClick} role="button" tabIndex={0}>
+    <div className="poster-card" onClick={onClick} onContextMenu={onContextMenu} role="button" tabIndex={0}>
       <div className="poster square" style={{ background: bg }}>
         {album.artworkUrl ? (
           <img className="poster-img" src={album.artworkUrl} alt="" />

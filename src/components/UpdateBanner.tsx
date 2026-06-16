@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "@mattmattmattmatt/base/primitives/icon/Icon";
 import { IN_TAURI } from "../ipc/engine";
+import { IS_IOS } from "../lib/platform";
 import { download, rotateCw, x } from "../lib/icons";
 import "./UpdateBanner.css";
 
@@ -33,7 +34,9 @@ export function UpdateBanner() {
   );
 
   useEffect(() => {
-    if (!IN_TAURI) return;
+    // OTA self-update (Tauri updater) is impossible on iOS — never import the
+    // plugin or poll there. Desktop keeps the full check + hourly polling.
+    if (!IN_TAURI || IS_IOS) return;
     let cancelled = false;
     const runCheck = async () => {
       try {
@@ -128,7 +131,7 @@ export function UpdateBanner() {
     setState({ kind: "idle" });
   }, [state]);
 
-  if (!IN_TAURI || state.kind === "idle") return null;
+  if (IS_IOS || !IN_TAURI || state.kind === "idle") return null;
 
   const pct =
     state.kind === "downloading" && state.total > 0

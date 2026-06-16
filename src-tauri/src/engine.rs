@@ -20,7 +20,7 @@ use axum::{
 use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, ManagedTorrent, Session, SessionOptions};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
 
@@ -184,6 +184,7 @@ impl Engine {
         };
         let router = Router::new()
             .route("/stream/{id}/{file}", get(stream_handler))
+            .route("/remux/{id}/{file}", get(remux_handler))
             .route("/hls/{id}/{file}/index.m3u8", get(hls_playlist_handler))
             .route("/hls/{id}/{file}/{seg}", get(hls_segment_handler))
             .route("/localhls/{token}/index.m3u8", get(local_hls_playlist_handler))
@@ -633,14 +634,27 @@ fn media_kind(name: &str) -> &'static str {
 }
 
 fn play_url(ffmpeg_on: bool, id: &str, file: usize, name: Option<&str>) -> String {
-    // Only non-web-native VIDEO is transcoded. Audio + everything else is served raw.
+    // Non-web-native VIDEO needs help to play in WKWebView. With ffmpeg (desktop) we
+    // transcode to HLS. Without it (iOS), Matroska whose codecs are already web-compatible
+    // (H.264/HEVC + AAC) is repackaged to fragmented MP4 in-process — no re-encode. Audio
+    // and everything else streams raw.
     let kind = name.map_or("video", media_kind);
-    let transcode = ffmpeg_on && kind == "video" && name.map_or(true, |n| !is_web_native(n));
-    if transcode {
-        format!("http://127.0.0.1:{STREAM_PORT}/hls/{id}/{file}/index.m3u8")
-    } else {
-        format!("http://127.0.0.1:{STREAM_PORT}/stream/{id}/{file}")
+    let non_native = name.map_or(true, |n| !is_web_native(n));
+    if kind == "video" && non_native {
+        if ffmpeg_on {
+            return format!("http://127.0.0.1:{STREAM_PORT}/hls/{id}/{file}/index.m3u8");
+        }
+        if name.is_some_and(is_matroska) {
+            return format!("http://127.0.0.1:{STREAM_PORT}/remux/{id}/{file}");
+        }
     }
+    format!("http://127.0.0.1:{STREAM_PORT}/stream/{id}/{file}")
+}
+
+/// Matroska family — the containers our in-process remux can read.
+fn is_matroska(name: &str) -> bool {
+    let n = name.to_lowercase();
+    n.ends_with(".mkv") || n.ends_with(".webm")
 }
 
 fn file_name(handle: &Arc<ManagedTorrent>, idx: usize) -> Option<String> {
@@ -922,6 +936,82 @@ async fn stream_handler(
         builder = builder.header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{total}"));
     }
     builder.body(body).unwrap().into_response()
+}
+
+/// Bridges librqbit's async, piece-aware `FileStream` to the synchronous `Read + Seek`
+/// the Matroska demuxer needs, by blocking on each op. Only safe to use from a blocking
+/// thread (e.g. `spawn_blocking`) — never a runtime worker. Seeking lets the demuxer reach
+/// the Cues/SeekHead at the file's tail; librqbit prioritises + waits for those pieces, so
+/// remux works while the torrent is still downloading.
+struct BlockingRead<S> {
+    inner: S,
+    rt: tokio::runtime::Handle,
+}
+impl<S: AsyncReadExt + Unpin> std::io::Read for BlockingRead<S> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.rt.block_on(self.inner.read(buf))
+    }
+}
+impl<S: AsyncSeekExt + Unpin> std::io::Seek for BlockingRead<S> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.rt.block_on(self.inner.seek(pos))
+    }
+}
+
+/// iOS can't spawn ffmpeg, so non-web-native Matroska video is repackaged to fragmented
+/// MP4 in-process (pure Rust, no re-encode) and streamed here. Codecs that genuinely need
+/// decoding (AC-3/DTS audio, VP9/MPEG-4 ASP video) return an error → the player shows an
+/// honest "unsupported format" message.
+async fn remux_handler(
+    AxPath((id, file)): AxPath<(String, usize)>,
+    AxState(state): AxState<ServerState>,
+) -> Response {
+    let handle = match state.torrents.read().await.get(&id).map(|e| e.handle.clone()) {
+        Some(h) => h,
+        None => return (StatusCode::NOT_FOUND, "unknown torrent").into_response(),
+    };
+    // Storage may still be initializing on the first request — retry briefly.
+    let stream = {
+        let mut opened = None;
+        for _ in 0..25 {
+            match handle.clone().stream(file) {
+                Ok(f) => {
+                    opened = Some(f);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(Duration::from_millis(200)).await,
+            }
+        }
+        match opened {
+            Some(f) => f,
+            None => return (StatusCode::SERVICE_UNAVAILABLE, "not ready").into_response(),
+        }
+    };
+
+    // Run the (synchronous) demux+mux on a blocking thread, piping fMP4 bytes through an
+    // in-memory duplex into the HTTP body. Backpressure: if the client reads slowly the
+    // duplex fills and write_all blocks; if it disconnects, writes error → remux stops.
+    let (writer, reader) = tokio::io::duplex(256 * 1024);
+    let rt = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        let src = BlockingRead { inner: stream, rt: rt.clone() };
+        let mut writer = writer;
+        let res = crate::remux::remux_mkv_to_fmp4(src, |chunk| {
+            rt.block_on(async { writer.write_all(chunk).await }).is_ok()
+        });
+        if let Err(e) = res {
+            eprintln!("ghosty: remux {id}/{file}: {e}");
+        }
+        // `writer` drops here → EOF on the reader → response body completes.
+    });
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "video/mp4")
+        .header(header::ACCEPT_RANGES, "none")
+        .body(Body::from_stream(ReaderStream::new(reader)))
+        .unwrap()
+        .into_response()
 }
 
 /// Serve the HLS playlist for a file, starting the ffmpeg transcode on first request

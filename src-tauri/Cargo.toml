@@ -1,6 +1,6 @@
 [package]
 name = "ghosty"
-version = "0.1.1"
+version = "0.1.2"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -51,6 +51,10 @@ notify-debouncer-mini = "0.4"
 # Pure-Rust audio tag read/write (ID3 / MP4 atoms / Vorbis comments) — no subprocess,
 # so embedded metadata travels with the file to any device. Used by the AI tag pass.
 lofty = "0.22"
+# Pure-Rust MKV/WebM demuxer. Powers the on-device MKV→fMP4 remux (src/remux.rs) so iOS,
+# which can't spawn ffmpeg, can still play Matroska files whose codecs are web-compatible
+# (H.264/HEVC video + AAC audio) by repackaging the container without re-encoding.
+matroska-demuxer = "0.7"
 
 # Single-instance: the engine binds a fixed loopback port, so a second launch would
 # crash on it. This focuses the running window and exits the new process instead.

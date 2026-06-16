@@ -27,6 +27,19 @@ export function streamFormat(title: string): "native" | "convert" {
   return "convert";
 }
 
+export type Quality = "4K" | "1080p" | "720p" | "SD";
+export const QUALITIES: Quality[] = ["4K", "1080p", "720p", "SD"];
+
+/** Resolution class parsed from a release title — powers the Discover quality filter. */
+export function qualityOf(title: string): Quality | null {
+  const t = title.toLowerCase();
+  if (/\b(?:2160p|4k|uhd)\b/.test(t)) return "4K";
+  if (/\b1080p\b/.test(t)) return "1080p";
+  if (/\b720p\b/.test(t)) return "720p";
+  if (/\b(?:480p|360p|sd|dvdrip|dvdscr|xvid)\b/.test(t)) return "SD";
+  return null;
+}
+
 /**
  * Instant, offline title clean — a JS mirror of the Rust `enrich::clean_title`. Strips
  * dots/underscores and cuts at the first quality/year marker so a messy release name reads
@@ -168,6 +181,22 @@ export const MOCK_CATALOG: CatalogItem[] = [
     sizeBytes: 8.7 * GB, seeders: 740, leechers: 33, source: "academictorrents.com",
     category: "video", addedAt: T0 - 11 * DAY, files: 24, year: 2011,
     description: "MIT OpenCourseWare lecture recordings. CC-BY-NC-SA.",
+  },
+  {
+    id: "a1b2c3d4e5f600112233445566778899aabbccdd",
+    title: "[SubsPlease] Frieren - 28 (1080p)",
+    magnet: magnet("a1b2c3d4e5f600112233445566778899aabbccdd", "frieren-28"),
+    sizeBytes: 1.3 * GB, seeders: 2210, leechers: 180, source: "nyaa.si",
+    category: "video", addedAt: T0 - 1 * DAY, files: 1, year: 2024,
+    description: "Sample anime listing (Discover demo).",
+  },
+  {
+    id: "b2c3d4e5f60011223344556677889900aabbccde",
+    title: "[Erai-raws] Jujutsu Kaisen S2 - 23 [1080p] Anime",
+    magnet: magnet("b2c3d4e5f60011223344556677889900aabbccde", "jjk-s2-23"),
+    sizeBytes: 1.4 * GB, seeders: 3050, leechers: 260, source: "nyaa.si",
+    category: "video", addedAt: T0 - 2 * DAY, files: 1, year: 2023,
+    description: "Sample anime listing (Discover demo).",
   },
 ];
 

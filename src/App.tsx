@@ -10,6 +10,7 @@ import { Search } from "./views/Search";
 import { TvShows } from "./views/TvShows";
 import { Music } from "./views/Music";
 import { Movies } from "./views/Movies";
+import { Anime } from "./views/Anime";
 import { Library } from "./views/Library";
 import { LibraryProvider } from "./ipc/libraryCache";
 import { ReplacePoster } from "./components/ReplacePoster";
@@ -848,7 +849,7 @@ export default function App() {
         organize={orgPhase === "idle" ? null : { phase: orgPhase, done: orgProgress.done, total: orgProgress.total, moved: orgResult?.moved ?? 0, changes: orgProgress.total }}
         onOrganizeClick={() => setOrgOpen((v) => !v)}
       />
-      <div className={`app-body${sidebarCollapsed || activeNav === "library" ? " sidebar-collapsed" : ""}`}>
+      <div className={`app-body${sidebarCollapsed || activeNav === "library" || activeNav === "anime" ? " sidebar-collapsed" : ""}`}>
         <NavigationRail
           active={activeNav}
           onNavigate={navigate}
@@ -856,7 +857,7 @@ export default function App() {
           sourceCount={sources.length}
         />
         <Sidebar
-          collapsed={sidebarCollapsed || activeNav === "library"}
+          collapsed={sidebarCollapsed || activeNav === "library" || activeNav === "anime"}
           section={activeNav}
           genres={sectionGenres}
           sort={secSort}
@@ -895,6 +896,9 @@ export default function App() {
             ) : activeSection === "movies" ? (
               <Movies onPlayLocal={playLocal} posterFor={posterForTitle} onReplacePoster={setReplaceTitle} />
             ) : null}
+            {view === "anime" && (
+              <Anime onPlayLocal={playLocal} posterFor={posterForTitle} onReplacePoster={setReplaceTitle} onBrowse={handleSearch} />
+            )}
             {view === "sources" && (
               <Sources
                 sources={sources}

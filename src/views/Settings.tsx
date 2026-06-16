@@ -23,6 +23,7 @@ import {
   type TidalAuthStatus,
 } from "../ipc/library";
 import { cpu, film, folderDown, folderOpen, hardDrive, rotateCw, sparkles } from "../lib/icons";
+import { IS_IOS } from "../lib/platform";
 
 export function Settings({ onCatalogChanged }: { onCatalogChanged: () => void }) {
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -213,7 +214,9 @@ export function Settings({ onCatalogChanged }: { onCatalogChanged: () => void })
           </div>
           <p className="field-hint">Where downloads are saved. Move it to an external drive and (optionally) bring your existing files along.</p>
           <div className="form-actions settings-actions">
-            <Button variant="secondary" icon={folderOpen} disabled={!IN_TAURI} onClick={chooseFolder}>Change folder…</Button>
+            {!IS_IOS && (
+              <Button variant="secondary" icon={folderOpen} disabled={!IN_TAURI} onClick={chooseFolder}>Change folder…</Button>
+            )}
             {needsRestart && (
               <Button variant="primary" icon={rotateCw} onClick={() => void restartApp()}>Restart now</Button>
             )}
@@ -349,6 +352,7 @@ export function Settings({ onCatalogChanged }: { onCatalogChanged: () => void })
         </div>
       </Card>
 
+      {!IS_IOS && (
       <Card variant="outlined" padding="lg">
         <div className="settings-group">
           <h4 className="settings-h">TIDAL app auth</h4>
@@ -470,6 +474,7 @@ export function Settings({ onCatalogChanged }: { onCatalogChanged: () => void })
           </div>
         </div>
       </Card>
+      )}
 
       <Card variant="outlined" padding="lg">
         <div className="settings-group">

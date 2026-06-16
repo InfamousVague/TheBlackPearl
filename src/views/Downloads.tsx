@@ -9,6 +9,7 @@ import { addToLibrary, clearDownloads, revealPath, trashDownloaded, type Downloa
 import { useDownloaded } from "../ipc/libraryCache";
 import type { DownloadState, DownloadStats } from "../lib/types";
 import { hueFromString } from "../lib/catalog";
+import { IS_IOS } from "../lib/platform";
 import { formatBytes, formatBytesPerSec, formatCount } from "../lib/format";
 import {
   arrowDown, arrowUp, circlePlay, clapperboard, folderDown, folderOpen, images, music,
@@ -76,7 +77,8 @@ export function Downloads({ downloads, onOpen, onRemove, onPause, onReveal, onPl
       { label: "Play", icon: circlePlay, onSelect: () => onPlayLocal(it) },
       { label: "Add to library", icon: plusCircle, onSelect: () => void addToLibrary(it.id).then(() => refresh()) },
       { label: "Replace poster…", icon: images, onSelect: () => onReplacePoster?.(it.title) },
-      { label: "Reveal in Finder", icon: folderOpen, onSelect: () => void revealPath(it.id) },
+      // macOS-only: Finder reveal is meaningless on iOS, so omit it there.
+      ...(IS_IOS ? [] : [{ label: "Reveal in Finder", icon: folderOpen, onSelect: () => void revealPath(it.id) }]),
       { label: "Move to Trash", icon: trash2, danger: true, divider: true, onSelect: () => void trashDownloaded(it.id).then(() => refresh()) },
     ];
   }
@@ -97,7 +99,8 @@ export function Downloads({ downloads, onOpen, onRemove, onPause, onReveal, onPl
     return [
       { label: `Add ${noun} to library (${g.items.length})`, icon: plusCircle, onSelect: () => addAll(g.items) },
       { label: "Replace poster…", icon: images, onSelect: () => onReplacePoster?.(g.title) },
-      { label: "Reveal in Finder", icon: folderOpen, onSelect: () => void revealPath(g.items[0].id) },
+      // macOS-only: Finder reveal is meaningless on iOS, so omit it there.
+      ...(IS_IOS ? [] : [{ label: "Reveal in Finder", icon: folderOpen, onSelect: () => void revealPath(g.items[0].id) }]),
       { label: `Move ${noun} to Trash`, icon: trash2, danger: true, divider: true, onSelect: () => trashAll(g.items) },
     ];
   }

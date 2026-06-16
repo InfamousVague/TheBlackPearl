@@ -7,6 +7,7 @@ import { removeFromLibrary, revealPath, trashDownloaded, type DownloadedItem } f
 import { useDownloaded } from "../ipc/libraryCache";
 import { hueFromString } from "../lib/catalog";
 import { formatBytes } from "../lib/format";
+import { IS_IOS } from "../lib/platform";
 import { circlePlay, clapperboard, folderOpen, images, library, music, rotateCw, sparkles, trash2, tv } from "../lib/icons";
 
 interface LibraryProps {
@@ -87,7 +88,7 @@ export function Library({ onPlayLocal, posterFor, onReplacePoster, onOrganize }:
         <span className="cat-title section-title"><Icon icon={library} size="base" /> Recently added</span>
         {items.length > 0 && <span className="cat-sub">{items.length}</span>}
         <div className="cat-controls">
-          <Button variant="secondary" icon={sparkles} onClick={onOrganize}>Organize</Button>
+          {!IS_IOS && <Button variant="secondary" icon={sparkles} onClick={onOrganize}>Organize</Button>}
           <Button variant="ghost" icon={rotateCw} onClick={refresh}>Refresh</Button>
         </div>
       </div>

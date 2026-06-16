@@ -243,7 +243,7 @@ fn legible_name(track: Option<i64>, title: &str, ext: &str) -> String {
 /// Returns artist, album, track number, title, and optional embedded artwork bytes.
 pub fn read_audio_tags(
     path: &Path,
-) -> (Option<String>, Option<String>, Option<i64>, Option<String>, Option<Vec<u8>>) {
+) -> (Option<String>, Option<String>, Option<String>, Option<i64>, Option<String>, Option<Vec<u8>>) {
     use lofty::file::TaggedFileExt;
     use lofty::picture::PictureType;
     use lofty::prelude::Accessor;
@@ -262,13 +262,14 @@ pub fn read_audio_tags(
             return (
                 tag.artist().and_then(|c| clean(c.to_string())),
                 tag.album().and_then(|c| clean(c.to_string())),
+                tag.genre().and_then(|c| clean(c.to_string())),
                 tag.track().map(|n| n as i64),
                 tag.title().and_then(|c| clean(c.to_string())),
                 art,
             );
         }
     }
-    (None, None, None, None, None)
+    (None, None, None, None, None, None)
 }
 
 /// Read the file's current title/artist/album so the model has context to clean up.

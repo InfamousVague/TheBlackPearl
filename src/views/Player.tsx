@@ -5,6 +5,7 @@ import type { DownloadStats, MediaInfo } from "../lib/types";
 import { formatBytes, formatBytesPerSec, formatCount } from "../lib/format";
 import { parseEpisode } from "../lib/media";
 import { IN_TAURI, listSubtitles, type SubTrack } from "../ipc/engine";
+import { IS_IOS } from "../lib/platform";
 import { tvEpisodes, tvSearch, type TvEpisode, type TvShow } from "../ipc/library";
 import { ShowPanel } from "../components/ShowPanel";
 import {
@@ -175,7 +176,10 @@ export function Player({ item, streamUrl, stats, info, onBack, onPlayEpisode }: 
   const media = () => videoRef.current;
 
   function handleError() {
-    if (!isAudio && src && src.includes("/stream/") && !triedFallback.current) {
+    // The /hls fallback is an ffmpeg transcode — impossible on iOS (no subprocess), so
+    // attempting it there just dead-ends into a second failure. Skip it and surface an
+    // honest "unsupported format" message instead of the misleading "ffmpeg failed".
+    if (!IS_IOS && !isAudio && src && src.includes("/stream/") && !triedFallback.current) {
       triedFallback.current = true;
       setErrored(false);
       setBuffering(true);
@@ -389,7 +393,12 @@ export function Player({ item, streamUrl, stats, info, onBack, onPlayEpisode }: 
             {errored && (
               <div className="yt-error">
                 <span className="yt-error-title">Couldn’t play this file</span>
-                <span className="yt-error-detail">{info?.transcodeError ?? info?.detail ?? "The format may be unsupported, or ffmpeg failed."}</span>
+                <span className="yt-error-detail">{
+                  info?.transcodeError ?? info?.detail ??
+                  (IS_IOS
+                    ? "This file's format can't play on iPad — transcoding is desktop-only. Try a different release, or play it in the desktop app."
+                    : "The format may be unsupported, or ffmpeg failed.")
+                }</span>
               </div>
             )}
 

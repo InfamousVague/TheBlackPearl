@@ -9,6 +9,7 @@ import { testSource, type SourceTest } from "../ipc/library";
 import { timeAgo } from "../lib/format";
 import { activity, circleAlert, circleCheck, download, globe, plus, rotateCw, rss, shieldCheck, x } from "../lib/icons";
 import { AddSourceDialog } from "../components/AddSourceDialog";
+import { IS_IOS } from "../lib/platform";
 
 const KIND_LABEL: Record<SourceKind, string> = {
   scraper: "Generic scraper",
@@ -119,15 +120,17 @@ export function Sources({ sources, refreshingId, status, onAdd, onRemove, onRefr
                   )}
                   {s.kind === "webview" ? (
                     <>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        icon={shieldCheck}
-                        aria-label={`Open and verify ${s.name}`}
-                        onClick={() => onOpenBrowser(s.url)}
-                      >
-                        Verify
-                      </Button>
+                      {!IS_IOS && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          icon={shieldCheck}
+                          aria-label={`Open and verify ${s.name}`}
+                          onClick={() => onOpenBrowser(s.url)}
+                        >
+                          Verify
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="sm"

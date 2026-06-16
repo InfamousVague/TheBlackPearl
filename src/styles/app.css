@@ -1108,7 +1108,11 @@ body {
 .source-test-sample { margin: 2px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; color: var(--gg-text-dim); }
 .source-test-sample li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 72ch; }
 
-.section-stack { display: grid; gap: 16px; max-width: 920px; }
+.section-stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; max-width: 920px; }
+/* Cap the single grid track at the container width so a wide child (e.g. the Music
+   browse rails' max-content) can't blow the whole page out — horizontal scrollers
+   then clip + scroll internally instead of overflowing. */
+.section-stack > * { min-width: 0; }
 
 /* ---------- Player ---------- */
 .player { display: flex; flex-direction: column; height: 100%; }

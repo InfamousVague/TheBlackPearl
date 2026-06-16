@@ -362,6 +362,8 @@ export interface DownloadedItem {
   /** Embedded audio tags (music only) — the Music view groups by these. */
   artist: string | null;
   album: string | null;
+  /** Embedded genre tag (music only) — drives the Music genre rows. */
+  genre: string | null;
   trackNo: number | null;
   /** Embedded album artwork (music only), served from loopback /art. */
   artworkUrl: string | null;

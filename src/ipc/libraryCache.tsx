@@ -10,6 +10,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { listen } from "@tauri-apps/api/event";
 import { IN_TAURI } from "./engine";
 import { listDownloaded, type DownloadedItem } from "./library";
+import { MOCK_DOWNLOADED } from "../lib/mockLibrary";
 
 interface LibraryCache {
   /** `null` until the first scan resolves; then the cached list. View loading = `items === null`. */
@@ -39,8 +40,10 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(() => {
     if (!IN_TAURI) {
-      setItems((cur) => cur ?? []);
-      return Promise.resolve<DownloadedItem[]>([]);
+      // Browser preview has no backend library — paint a fixture so the
+      // Music/Library views have something to lay out against (dev-only).
+      setItems((cur) => cur ?? MOCK_DOWNLOADED);
+      return Promise.resolve<DownloadedItem[]>(MOCK_DOWNLOADED);
     }
     if (inflight.current) return inflight.current;
     const p = listDownloaded()

@@ -78,3 +78,13 @@ export { volumeX } from "@mattmattmattmatt/base/primitives/icon/icons/volume-x";
 export { listMusic } from "@mattmattmattmatt/base/primitives/icon/icons/list-music";
 export { gauge } from "@mattmattmattmatt/base/primitives/icon/icons/gauge";
 export { info } from "@mattmattmattmatt/base/primitives/icon/icons/info";
+
+// Custom (no Base equivalent): ア — the first katakana of アニメ ("anime"), drawn
+// large as a single glyph for the Anime section. The Icon primitive's <svg>
+// wrapper sets fill="none" stroke="currentColor", so it's drawn FILLED
+// (fill=currentColor, stroke=none) and centered to fill the box.
+export const anime =
+  '<text x="12" y="12.5" text-anchor="middle" dominant-baseline="central" ' +
+  'fill="currentColor" stroke="none" ' +
+  "font-family=\"'Hiragino Sans','Hiragino Kaku Gothic Pro','Yu Gothic','Noto Sans JP',sans-serif\" " +
+  'font-size="23" font-weight="800">ア</text>';

@@ -5,7 +5,12 @@ node_modules/
 dist/
 dist-web/
 src-tauri/target/
+# Tauri-generated (schemas + per-platform mobile projects) — regenerated on build.
+src-tauri/gen/
 .vite/
+
+# Local agent/editor config
+.claude/
 
 # Credentials — NEVER commit. .env.apple holds the Apple app-specific
 # password used for notarization; .env.apple.example (placeholders) is kept.

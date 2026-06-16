@@ -195,8 +195,36 @@ pub async fn candidates(client: &reqwest::Client, title: &str, kind: &str) -> Ve
 
 // ---------- waterfall ----------
 
-/// Best poster for an item, keyless-first. `kind` is "movie" | "show" | "music".
-/// Keyless sources first (work out of the box), then TMDB/OMDb when keys supplied.
+/// Base URL of The Black Pearl artwork relay — movie/TV posters + album art,
+/// resolved and cached server-side so no client needs an API key. The endpoints
+/// return image bytes directly, so a relay URL is usable anywhere a poster URL is
+/// (the UI and the local artwork cache fetch it like any other image).
+const RELAY_BASE: &str = "https://theblackpearl.tv/api";
+
+/// Build the relay poster URL for an item. Deterministic by title/year, so it's a
+/// stable value to persist and cache.
+fn relay_poster_url(kind: &str, title: &str, year: Option<i64>) -> String {
+    let typ = match kind {
+        "anime" => "anime",
+        "show" => "tv",
+        _ => "movie",
+    };
+    let mut url = reqwest::Url::parse(&format!("{RELAY_BASE}/poster")).expect("valid relay url");
+    {
+        let mut qp = url.query_pairs_mut();
+        qp.append_pair("type", typ);
+        qp.append_pair("title", title);
+        if let Some(y) = year {
+            qp.append_pair("year", &y.to_string());
+        }
+    }
+    url.into()
+}
+
+/// Best poster for an item. By default the relay resolves + caches it server-side
+/// (no API key needed); the returned URL is the image itself. When the user
+/// supplies their own TMDB/OMDb keys we resolve directly instead — a power-user /
+/// self-host / offline path.
 pub async fn find_poster(
     client: &reqwest::Client,
     title: &str,
@@ -208,25 +236,33 @@ pub async fn find_poster(
     if kind == "music" {
         return itunes_album(client, title).await.ok().flatten();
     }
-    // 1. IMDb (keyless — commercial movies + TV)
-    if let Ok(Some(u)) = imdb_poster(client, title, year, kind == "show").await {
-        return Some(u);
+    // Anime resolves best via AniList (through the relay's /poster?type=anime);
+    // TMDB/OMDb are weak at anime, so route it to the relay regardless of keys.
+    if kind == "anime" {
+        return Some(relay_poster_url("anime", title, year));
     }
-    // 2. TMDB (key)
-    if let Some(k) = tmdb_key {
-        if let Ok(Some(u)) = enrich::tmdb_poster(client, k, title, year, kind).await {
+    // Power users with their own keys resolve directly (no relay dependency).
+    if tmdb_key.is_some() || omdb_key.is_some() {
+        // IMDb (keyless) first as a cheap try, then the supplied keys.
+        if let Ok(Some(u)) = imdb_poster(client, title, year, kind == "show").await {
             return Some(u);
         }
-    }
-    // 3. OMDb (key)
-    if let Some(k) = omdb_key {
-        if let Ok(Some(a)) = artwork::omdb_lookup(client, k, title, year, Some(kind)).await {
-            if a.poster_url.is_some() {
-                return a.poster_url;
+        if let Some(k) = tmdb_key {
+            if let Ok(Some(u)) = enrich::tmdb_poster(client, k, title, year, kind).await {
+                return Some(u);
             }
         }
+        if let Some(k) = omdb_key {
+            if let Ok(Some(a)) = artwork::omdb_lookup(client, k, title, year, Some(kind)).await {
+                if a.poster_url.is_some() {
+                    return a.poster_url;
+                }
+            }
+        }
+        return None;
     }
-    None
+    // Default: keyless via the relay. The endpoint IS the image URL.
+    Some(relay_poster_url(kind, title, year))
 }
 
 // ---------- helpers ----------
@@ -271,6 +307,22 @@ pub fn clean_for_query(title: &str, kind: &str) -> String {
         }
     }
 
+    // Anime: strip a leading [fansub-group] / (group) tag, then cut at the episode
+    // marker so just the series / film title remains for the AniList lookup.
+    if kind == "anime" {
+        if let Ok(re) = regex::Regex::new(r"^\s*[\[(][^\])]*[\])]\s*") {
+            let stripped = re.replace(&t, "").into_owned();
+            t = stripped;
+        }
+        if let Ok(re) = regex::Regex::new(r"(?i)\s-\s*\d{1,4}\b|\bs\d{1,2}(\s?e\d{1,2})?\b|\bep(isode)?\s*\d{1,4}\b") {
+            if let Some(m) = re.find(&t) {
+                if m.start() > 0 {
+                    t.truncate(m.start());
+                }
+            }
+        }
+    }
+
     // Cut at the first release-noise marker (quality / source / codec / format /
     // group bracket). Guard pos>0 so a title that *starts* with a marker survives.
     const MARKERS: &[&str] = &[
@@ -300,9 +352,28 @@ pub fn clean_for_query(title: &str, kind: &str) -> String {
     t.trim().trim_end_matches([' ', '-', '(', '[', ':']).trim().to_string()
 }
 
-/// Guess the media kind from a release title (TV markers / audio hints).
+/// Fansub-group tags + anime markers that strongly imply an anime release
+/// (mirrors the frontend's media.ts detection).
+fn is_anime(t: &str) -> bool {
+    const GROUPS: &[&str] = &[
+        "[subsplease]", "[erai-raws]", "[horriblesubs]", "[judas]", "[ember]", "[asw]",
+        "[commie]", "[cyc]", "[nyaa]", "[ohys-raws]", "[golumpa]", "[yameii]", "[cleo]", "[sallysubs]",
+    ];
+    if GROUPS.iter().any(|g| t.contains(g)) {
+        return true;
+    }
+    ["anime", "fansub", "vostfr", "simuldub", "softsub", "hardsub", "crunchyroll"]
+        .iter()
+        .any(|m| t.contains(m))
+}
+
+/// Guess the media kind from a release title (anime / TV markers / audio hints).
 pub fn guess_kind(title: &str) -> &'static str {
     let t = title.to_lowercase();
+    // Anime first — AniList (the relay's anime source) covers both films and series.
+    if is_anime(&t) {
+        return "anime";
+    }
     let is_tv = regex::Regex::new(r"\bs\d{1,2}\s?e\d{1,2}\b|\bs\d{1,2}\b|\bseason\s*\d|\bcomplete\b|\bepisode")
         .ok()
         .map_or(false, |re| re.is_match(&t));

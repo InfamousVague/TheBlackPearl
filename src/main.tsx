@@ -2,7 +2,8 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { PlayerProvider } from "./ipc/player";
-import { applyPlatformClasses } from "./lib/platform";
+import { applyPlatformClasses, IS_TOUCH } from "./lib/platform";
+import { installLongPressContextMenu } from "./lib/longpress";
 
 // Base UI design system: base reset + token variables, then the primitives we use.
 import "@mattmattmattmatt/base/site/styles/base.css";
@@ -25,6 +26,8 @@ import "./styles/app-background.css";
 document.documentElement.setAttribute("data-theme", "dark");
 // Tag iOS / touch so the shell can drop desktop chrome and adapt for iPad.
 applyPlatformClasses();
+// Touch devices have no right-click: bridge long-press → context menu (+ haptic).
+if (IS_TOUCH) installLongPressContextMenu();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

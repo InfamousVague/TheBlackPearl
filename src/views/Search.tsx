@@ -8,9 +8,9 @@ import { PosterRow } from "../components/PosterRow";
 import { Hero } from "../components/Hero";
 import type { CatalogItem, Category, SortKey } from "../lib/types";
 import type { LibraryItem } from "../ipc/library";
-import type { MediaSectionId } from "../lib/media";
-import { CATEGORY_LABEL, sortCatalog, streamFormat } from "../lib/catalog";
-import { arrowDownUp, clapperboard, history, link2, music, plus, search as searchIcon, trendingUp, tv } from "../lib/icons";
+import { isAnime, ANIME_GENRES, type MediaSectionId } from "../lib/media";
+import { CATEGORY_LABEL, qualityOf, QUALITIES, sortCatalog, streamFormat, type Quality } from "../lib/catalog";
+import { anime as animeIcon, arrowDownUp, clapperboard, history, link2, music, plus, search as searchIcon, trendingUp, tv } from "../lib/icons";
 
 /** Strongest billboard candidate: prefer a poster + synopsis, then most-seeded. */
 function pickFeatured(pool: LibraryItem[]): LibraryItem | null {
@@ -79,6 +79,8 @@ export function Search({
   const [sort, setSort] = useState<SortKey>("popularity");
   const [category, setCategory] = useState<Category | "all">("all");
   const [format, setFormat] = useState<FormatFilter>("all");
+  const [quality, setQuality] = useState<Quality | "all">("all");
+  const [wellSeeded, setWellSeeded] = useState(false);
 
   useEffect(() => setValue(query), [query]);
 
@@ -100,12 +102,20 @@ export function Search({
     return CATEGORY_ORDER.filter((c) => set.has(c));
   }, [results]);
 
+  // Which quality classes actually appear in the results — only show those chips.
+  const presentQualities = useMemo(() => {
+    const set = new Set(results.map((r) => qualityOf(r.title)).filter(Boolean) as Quality[]);
+    return QUALITIES.filter((q) => set.has(q));
+  }, [results]);
+
   const visible = useMemo(() => {
     let list = results;
     if (category !== "all") list = list.filter((r) => r.category === category);
     if (format !== "all") list = list.filter((r) => streamFormat(r.title) === format);
+    if (quality !== "all") list = list.filter((r) => qualityOf(r.title) === quality);
+    if (wellSeeded) list = list.filter((r) => r.seeders >= 10);
     return sortCatalog(list, sort);
-  }, [results, category, format, sort]);
+  }, [results, category, format, quality, wellSeeded, sort]);
 
   // ---- Discover billboard + carousels (the idle home) ----
   const pool = useMemo(
@@ -114,6 +124,10 @@ export function Search({
   );
   const featured = useMemo(() => pickFeatured(pool), [pool]);
   const trending = useMemo(() => [...pool].sort((a, b) => b.seeders - a.seeders).slice(0, 24), [pool]);
+  const animeItems = useMemo(
+    () => [...sections.movies, ...sections.tvshows].filter((it) => isAnime(it)).sort((a, b) => b.seeders - a.seeders).slice(0, 24),
+    [sections],
+  );
 
   const idle = !query && !loading && !error;
   const showControls = !idle && !loading && !error && results.length > 0;
@@ -181,6 +195,13 @@ export function Search({
               ))}
             </PosterRow>
           )}
+          {animeItems.length > 0 && (
+            <PosterRow title="Anime" count={animeItems.length}>
+              {animeItems.map((it) => (
+                <PosterCard key={it.id} item={it} onPlay={() => onPlay(it)} onQueue={() => onQueue(it)} />
+              ))}
+            </PosterRow>
+          )}
           {sections.music.length > 0 && (
             <PosterRow title="Music" count={sections.music.length}>
               {sections.music.slice(0, 24).map((it) => (
@@ -220,6 +241,16 @@ export function Search({
               <div className="chip-row">
                 {TV_GENRES.map((g) => (
                   <button key={g} className="search-chip" onClick={() => onSearch(g)}>{g}</button>
+                ))}
+              </div>
+            </section>
+            <section className="search-sec">
+              <div className="search-sec-head">
+                <span className="search-sec-title"><Icon icon={animeIcon} size="sm" /> Anime by genre</span>
+              </div>
+              <div className="chip-row">
+                {ANIME_GENRES.map((g) => (
+                  <button key={g} className="search-chip" onClick={() => onSearch(g === "Anime" ? "anime" : `anime ${g}`)}>{g}</button>
                 ))}
               </div>
             </section>
@@ -270,6 +301,17 @@ export function Search({
                 <button className={format === "all" ? "active" : ""} onClick={() => setFormat("all")}>Any format</button>
                 <button className={format === "native" ? "active" : ""} onClick={() => setFormat("native")}>Plays natively</button>
                 <button className={format === "convert" ? "active" : ""} onClick={() => setFormat("convert")}>Needs convert</button>
+              </div>
+              {presentQualities.length > 0 && (
+                <div className="seg">
+                  <button className={quality === "all" ? "active" : ""} onClick={() => setQuality("all")}>Any quality</button>
+                  {presentQualities.map((q) => (
+                    <button key={q} className={quality === q ? "active" : ""} onClick={() => setQuality(q)}>{q}</button>
+                  ))}
+                </div>
+              )}
+              <div className="seg">
+                <button className={wellSeeded ? "active" : ""} onClick={() => setWellSeeded((v) => !v)}>Well-seeded</button>
               </div>
             </div>
           )}

@@ -123,6 +123,35 @@ export const SECTION_LABEL: Record<MediaSectionId, string> = {
   music: "Music",
 };
 
+// ---- Anime (cross-cutting: spans Movies + TV, so it's a filter, not a section) ----
+
+// Common fansub / release-group tags that all but guarantee an anime release.
+const ANIME_GROUP_RE = /\[(?:subsplease|erai-raws|horriblesubs|judas|ember|asw|commie|cyc|nyaa|anime\s?time|ohys-raws|golumpa|yameii|cleo|sallysubs)\]/i;
+// Anime-specific release markers (NOT generic "raw"/"dub" which over-match).
+const ANIME_HINT_RE = /\b(?:anime|fansub|vostfr|simuldub|softsub|hardsub|crunchyroll)\b/i;
+
+/**
+ * Best-effort "is this anime?" for an item. Anime overlaps Movies + TV (an anime
+ * film is still a movie), so this is a cross-cutting predicate the Anime section
+ * and the Discover anime row filter on — not a `MediaSectionId`. Signals, in order:
+ * an explicit `anime` genre, a known fansub group tag, or `animation` + an
+ * anime-specific release marker.
+ */
+export function isAnime(item: { title: string; genre?: string | null }): boolean {
+  const g = (item.genre ?? "").toLowerCase();
+  if (g.includes("anime")) return true;
+  if (ANIME_GROUP_RE.test(item.title)) return true;
+  if (/\banime\b/i.test(item.title)) return true;
+  if (g.includes("animation") && ANIME_HINT_RE.test(item.title)) return true;
+  return false;
+}
+
+/** Genre chips for the Anime browse hub — each runs a live source search. */
+export const ANIME_GENRES = [
+  "Anime", "Shonen", "Shojo", "Isekai", "Slice of Life", "Mecha",
+  "Romance", "Action", "Fantasy", "Seinen", "Sports", "Movie",
+];
+
 /** Distinct genres present across items (from the AI `genre` field), sorted, capped. */
 export function genresOf(items: { genre?: string | null }[]): string[] {
   const set = new Set<string>();

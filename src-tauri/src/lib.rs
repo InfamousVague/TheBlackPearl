@@ -10,6 +10,7 @@ mod metadata;
 pub mod music;
 mod organize;
 pub mod posters;
+mod remux;
 mod spotify;
 pub mod tvmaze;
 
@@ -2279,6 +2280,8 @@ struct DownloadedItem {
     /// path no longer carries artist/album once a file is flattened into the library.
     artist: Option<String>,
     album: Option<String>,
+    /// Embedded genre tag (music only) — the Music view groups albums by it.
+    genre: Option<String>,
     track_no: Option<i64>,
     /// Embedded album artwork (music only), served from the local /art cache.
     artwork_url: Option<String>,
@@ -2593,10 +2596,10 @@ fn scan_downloaded(info: &AppInfo, catalog: &Catalog) -> Vec<DownloadedItem> {
                 format!("http://127.0.0.1:{}/file/{}", engine::STREAM_PORT, enc_path(&rel))
             };
             // For audio, embedded tags are the source of truth for artist/album/track/title.
-            let (artist, album, track_no, tag_title, embedded_art) = if e.kind == "audio" {
+            let (artist, album, genre, track_no, tag_title, embedded_art) = if e.kind == "audio" {
                 metadata::read_audio_tags(&abs)
             } else {
-                (None, None, None, None, None)
+                (None, None, None, None, None, None)
             };
             let artwork_url = embedded_art.as_deref().and_then(|bytes| {
                 cached_music_artwork_url(&art_dir, &rel, e.size_bytes as i64, e.added_at, bytes)
@@ -2612,6 +2615,7 @@ fn scan_downloaded(info: &AppInfo, catalog: &Catalog) -> Vec<DownloadedItem> {
                 episode: e.episode,
                 artist,
                 album,
+                genre,
                 track_no,
                 artwork_url,
                 size_bytes: e.size_bytes as i64,
