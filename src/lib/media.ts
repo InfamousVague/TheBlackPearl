@@ -52,18 +52,34 @@ export function mediaKind(title: string, category?: Category): MediaKind {
   }
 }
 
-// ---- top-level libraries (Movies / TV Shows / Music) ----
+// ---- top-level libraries (Movies / TV Shows / Music / Books / Games) ----
 
-export type MediaSectionId = "movies" | "tvshows" | "music";
+export type MediaSectionId = "movies" | "tvshows" | "music" | "books" | "games";
 
 // Series/episode markers that distinguish a TV show from a movie.
 const TV_RE = /(\bs\d{1,2}\s?e\d{1,2}\b|\bs\d{1,2}\b|\bseason\s*\d|\bcomplete\s+series\b|\bepisodes?\b|\b\d{1,2}x\d{2}\b)/i;
+const GAME_EXT = new Set([
+  "nsp", "xci", "3ds", "cia", "nds", "gba", "gbc", "gb", "nes", "sfc", "smc",
+  "n64", "z64", "vpk", "wad", "xex", "cso", "pbp", "rom", "iso",
+]);
+const GAME_HINT_RE = /\b(repack|fitgirl|dodi|steamrip|gog|nintendo|switch|xbox|playstation|ps[345]|romset)\b/i;
+
+function isGameRelease(title: string): boolean {
+  const t = title.toLowerCase();
+  const tokens = t.match(/\.([a-z0-9]{2,4})(?=[^a-z0-9]|$)/g);
+  if (tokens) {
+    for (let i = tokens.length - 1; i >= 0; i--) {
+      if (GAME_EXT.has(tokens[i].slice(1))) return true;
+    }
+  }
+  return GAME_HINT_RE.test(t);
+}
 
 /**
  * Which top-level library an item belongs to. The AI scan's `mediaType` wins when
  * present; otherwise fall back to `mediaKind` + pattern heuristics. Non-AV content
- * (ISOs, installers, archives, books, datasets…) returns "other" and is shown in no
- * section — the app only browses Movies / TV / Music.
+ * (ISOs, installers, archives, datasets…) returns "other" and is shown in no
+ * section.
  */
 export function sectionOf(item: {
   title: string;
@@ -74,6 +90,12 @@ export function sectionOf(item: {
   if (mt === "movie") return "movies";
   if (mt === "show" || mt === "series" || mt === "tv") return "tvshows";
   if (mt === "music") return "music";
+  if (mt === "game" || mt === "games") return "games";
+  if (mt === "book" || mt === "ebook") return "books";
+  if (item.category === "books") return "books";
+  if ((item.category === "software" || item.category === "data" || item.category === "other") && isGameRelease(item.title)) {
+    return "games";
+  }
   const kind = mediaKind(item.title, item.category);
   if (kind === "audio") return "music";
   if (kind === "video") return TV_RE.test(item.title) ? "tvshows" : "movies";
@@ -154,7 +176,22 @@ export const SECTION_LABEL: Record<MediaSectionId, string> = {
   movies: "Movies",
   tvshows: "TV Shows",
   music: "Music",
+  books: "Books",
+  games: "Games",
 };
+
+/** The Discover category switcher. "anime" is a cross-cutting filter (not a section); the
+ *  rest map to `MediaSectionId`. Order + labels are what the toggle renders. */
+export type DiscoverTab = "all" | MediaSectionId | "anime";
+export const DISCOVER_TABS: { id: DiscoverTab; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "tvshows", label: "Shows" },
+  { id: "anime", label: "Anime" },
+  { id: "movies", label: "Movies" },
+  { id: "music", label: "Music" },
+  { id: "books", label: "Books" },
+  { id: "games", label: "Games" },
+];
 
 // ---- Anime (cross-cutting: spans Movies + TV, so it's a filter, not a section) ----
 

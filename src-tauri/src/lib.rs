@@ -17,6 +17,7 @@ mod subtitles;
 mod remote;
 mod remux;
 mod spotify;
+mod trending;
 pub mod tvmaze;
 
 use std::collections::{HashMap, HashSet};
@@ -2443,8 +2444,8 @@ pub(crate) struct DownloadedItem {
     id: String,
     title: String,
     file_name: String,
-    kind: String,       // "video" | "audio"
-    media_type: String, // "movie" | "show" | "music"
+    kind: String,       // "video" | "audio" | "book" | "game"
+    media_type: String, // "movie" | "show" | "music" | "book" | "game"
     season: Option<i64>,
     episode: Option<i64>,
     /// Embedded audio tags (music only) — the Music view groups by these, since the
@@ -2799,7 +2800,7 @@ pub(crate) fn scan_downloaded(info: &AppInfo, catalog: &Catalog) -> Vec<Download
         .collect()
 }
 
-/// Everything downloaded to disk, parsed into movies / shows / music with a ready-to-play
+/// Everything downloaded to disk, parsed into movies / shows / music / books / games with a ready-to-play
 /// loopback URL. This is the Library — your local content, independent of the live session.
 /// Served from a 5s in-memory cache so rapid tab-switching doesn't re-walk the disk.
 #[tauri::command]
@@ -3677,6 +3678,209 @@ async fn import_from_browser(
     Ok(n)
 }
 
+fn is_zlib_http_url(url: &str) -> bool {
+    let u = url.to_lowercase();
+    (u.starts_with("http://") || u.starts_with("https://"))
+        && (u.contains("z-library") || u.contains("zlibrary") || u.contains("z-lib") || u.contains("singlelogin"))
+}
+
+fn percent_decode_component(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' if i + 2 < bytes.len() => match u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                Ok(v) => {
+                    out.push(v);
+                    i += 3;
+                }
+                Err(_) => {
+                    out.push(bytes[i]);
+                    i += 1;
+                }
+            },
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn filename_from_content_disposition(v: Option<&reqwest::header::HeaderValue>) -> Option<String> {
+    let raw = v?.to_str().ok()?.trim();
+    let lower = raw.to_lowercase();
+
+    if let Some(i) = lower.find("filename*=") {
+        let mut p = raw.get(i + 10..)?.trim();
+        if let Some(end) = p.find(';') {
+            p = &p[..end];
+        }
+        p = p.trim_matches('"');
+        if let Some(pos) = p.find("''") {
+            p = &p[pos + 2..];
+        }
+        let d = percent_decode_component(p).trim().to_string();
+        if !d.is_empty() {
+            return Some(d);
+        }
+    }
+
+    if let Some(i) = lower.find("filename=") {
+        let mut p = raw.get(i + 9..)?.trim();
+        if let Some(end) = p.find(';') {
+            p = &p[..end];
+        }
+        let d = p.trim_matches('"').trim().to_string();
+        if !d.is_empty() {
+            return Some(d);
+        }
+    }
+
+    None
+}
+
+fn filename_from_url(url: &str) -> Option<String> {
+    let q = url.split('?').next().unwrap_or(url);
+    let part = q.rsplit('/').next().unwrap_or("").trim();
+    if part.is_empty() {
+        None
+    } else {
+        Some(percent_decode_component(part))
+    }
+}
+
+fn ext_from_content_type(ct: Option<&reqwest::header::HeaderValue>) -> Option<&'static str> {
+    let s = ct?.to_str().ok()?.to_ascii_lowercase();
+    if s.contains("application/pdf") {
+        Some("pdf")
+    } else if s.contains("application/epub+zip") {
+        Some("epub")
+    } else if s.contains("application/x-mobipocket-ebook") || s.contains("application/vnd.amazon.mobi8-ebook") {
+        Some("mobi")
+    } else if s.contains("application/vnd.amazon.ebook") {
+        Some("azw")
+    } else if s.contains("application/x-fictionbook+xml") {
+        Some("fb2")
+    } else if s.contains("application/zip") {
+        Some("zip")
+    } else if s.contains("application/octet-stream") {
+        None
+    } else if s.contains("text/plain") {
+        Some("txt")
+    } else {
+        None
+    }
+}
+
+fn normalized_download_name(raw: &str) -> String {
+    let cleaned = export::sanitize(raw).trim().trim_matches('.').to_string();
+    if cleaned.is_empty() {
+        "book".to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn with_extension_if_missing(name: String, ext: Option<&str>) -> String {
+    if name.rsplit_once('.').is_some() {
+        return name;
+    }
+    match ext {
+        Some(e) if !e.is_empty() => format!("{name}.{e}"),
+        _ => name,
+    }
+}
+
+fn unique_download_path(path: PathBuf) -> PathBuf {
+    if !path.exists() {
+        return path;
+    }
+    let parent = path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("book");
+    let ext = path.extension().and_then(|s| s.to_str());
+    for n in 2..1000 {
+        let cand = match ext {
+            Some(e) if !e.is_empty() => parent.join(format!("{stem} ({n}).{e}")),
+            _ => parent.join(format!("{stem} ({n})")),
+        };
+        if !cand.exists() {
+            return cand;
+        }
+    }
+    path
+}
+
+/// Download a direct HTTP(S) file into the app's download folder and return the saved path.
+/// For z-library domains this solves the anti-bot cookie challenge first, so books can be
+/// downloaded in-app without opening the verification browser.
+#[tauri::command]
+async fn download_http_file(
+    info: tauri::State<'_, AppInfo>,
+    url: String,
+    title: Option<String>,
+) -> Result<String, String> {
+    let link = url.trim();
+    if !(link.starts_with("http://") || link.starts_with("https://")) {
+        return Err("Only http(s) URLs can be downloaded directly.".to_string());
+    }
+
+    let client = reqwest::Client::builder()
+        .user_agent(BROWSER_UA)
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut req = client.get(link);
+    if is_zlib_http_url(link) {
+        if let Some(cookie) = indexer::zlib_cookie_header(link).await {
+            req = req.header(reqwest::header::COOKIE, cookie);
+        }
+    }
+
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let final_url = resp.url().to_string();
+    let headers = resp.headers().clone();
+    let content_type = headers
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if content_type.starts_with("text/html") || content_type.contains("application/xhtml") {
+        return Err("URL resolved to an HTML page, not a direct file.".to_string());
+    }
+    let data = resp.bytes().await.map_err(|e| e.to_string())?;
+    if data.is_empty() {
+        return Err("Download returned no data.".to_string());
+    }
+    let head = String::from_utf8_lossy(&data[..data.len().min(512)]).to_ascii_lowercase();
+    if head.contains("<!doctype html") || head.contains("<html") {
+        return Err("URL resolved to an HTML page, not a direct file.".to_string());
+    }
+
+    std::fs::create_dir_all(&info.download_dir).map_err(|e| e.to_string())?;
+    let ct_ext = ext_from_content_type(headers.get(reqwest::header::CONTENT_TYPE));
+    let preferred = filename_from_content_disposition(headers.get(reqwest::header::CONTENT_DISPOSITION))
+        .or_else(|| filename_from_url(&final_url))
+        .or_else(|| filename_from_url(link))
+        .or_else(|| title.map(|t| normalized_download_name(&t)))
+        .unwrap_or_else(|| "book".to_string());
+    let file_name = with_extension_if_missing(normalized_download_name(&preferred), ct_ext);
+    let path = unique_download_path(PathBuf::from(&info.download_dir).join(file_name));
+    tokio::fs::write(&path, &data).await.map_err(|e| e.to_string())?;
+
+    Ok(path.display().to_string())
+}
+
 // ---- export to media libraries (Plex / Apple Music / generic folder) ----
 
 /// Native folder picker (supports creating new folders). Returns the chosen path.
@@ -4072,6 +4276,19 @@ async fn popular_anime() -> Result<anime::AnimeDiscovery, String> {
     Ok(anime::popular_anime(&client).await)
 }
 
+/// Top/trending items for a Discover category from free sources: Movies/TV via the relay
+/// (TMDB), Music via Apple RSS, Books via Open Library, Games via SteamSpy. Each degrades to
+/// an empty list on error. Clicking a result runs a source search (handled in the UI).
+#[tauri::command]
+async fn trending(category: String) -> Result<Vec<trending::TrendingItem>, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(BROWSER_UA)
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(trending::fetch(&client, posters::RELAY_BASE, &category).await)
+}
+
 /// Look up one anime by title (synopsis, genres, episode count + episode list) for the
 /// below-player anime panel. Keyless (AniList → Jikan). Null when nothing matches.
 #[tauri::command]
@@ -4269,6 +4486,7 @@ pub fn run() {
             reveal_download,
             open_browser,
             import_from_browser,
+            download_http_file,
             pick_folder,
             set_storage_dir,
             restart_app,
@@ -4277,6 +4495,7 @@ pub fn run() {
             export_items,
             popular_shows,
             popular_anime,
+            trending,
             anime_detail,
             compile_seasons,
             list_playlists,

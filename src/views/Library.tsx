@@ -8,7 +8,7 @@ import { useDownloaded } from "../ipc/libraryCache";
 import { hueFromString } from "../lib/catalog";
 import { formatBytes } from "../lib/format";
 import { IS_IOS } from "../lib/platform";
-import { circlePlay, clapperboard, folderOpen, images, library, music, rotateCw, sparkles, trash2, tv } from "../lib/icons";
+import { book, circlePlay, clapperboard, folderOpen, gamepad2, images, library, music, rotateCw, sparkles, trash2, tv } from "../lib/icons";
 
 interface LibraryProps {
   onPlayLocal: (item: DownloadedItem) => void;
@@ -35,14 +35,14 @@ function bucketOf(addedAt: number, now: number): { order: number; label: string 
 }
 
 function glyphFor(t: DownloadedItem["mediaType"]): string {
-  return t === "show" ? tv : t === "music" ? music : clapperboard;
+  return t === "show" ? tv : t === "music" ? music : t === "book" ? book : t === "game" ? gamepad2 : clapperboard;
 }
 
 function subOf(it: DownloadedItem): string {
   if (it.mediaType === "show" && it.season != null && it.episode != null) {
     return `S${pad(it.season)}E${pad(it.episode)} · ${formatBytes(it.sizeBytes)}`;
   }
-  const label = it.mediaType === "music" ? "Song" : it.mediaType === "show" ? "Episode" : "Movie";
+  const label = it.mediaType === "music" ? "Song" : it.mediaType === "show" ? "Episode" : it.mediaType === "book" ? "Book" : it.mediaType === "game" ? "Game" : "Movie";
   return `${label} · ${formatBytes(it.sizeBytes)}`;
 }
 

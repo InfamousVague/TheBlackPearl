@@ -7,20 +7,12 @@ import { PosterCard } from "../components/PosterCard";
 import { PosterRow } from "../components/PosterRow";
 import { FeaturedCarousel } from "../components/FeaturedCarousel";
 import { AnimeDiscoverRows } from "../components/AnimeDiscoverRows";
+import { DiscoverTrending } from "../components/DiscoverTrending";
 import type { CatalogItem, Category, SortKey } from "../lib/types";
 import type { LibraryItem, MovieDigest } from "../ipc/library";
-import { isAnime, ANIME_GENRES, type MediaSectionId } from "../lib/media";
+import { isAnime, sectionOf, ANIME_GENRES, DISCOVER_TABS, type DiscoverTab, type MediaSectionId } from "../lib/media";
 import { CATEGORY_LABEL, cleanRelease, qualityOf, QUALITIES, sortCatalog, streamFormat, type Quality } from "../lib/catalog";
 import { anime as animeIcon, arrowDownUp, clapperboard, history, link2, music, plus, search as searchIcon, trendingUp, tv } from "../lib/icons";
-
-/** Strongest billboard candidate: prefer a poster + synopsis, then most-seeded. */
-function pickFeatured(pool: LibraryItem[]): LibraryItem | null {
-  if (pool.length === 0) return null;
-  const withPoster = pool.filter((p) => p.poster);
-  const rich = withPoster.filter((p) => p.description);
-  const from = rich.length ? rich : withPoster.length ? withPoster : pool;
-  return [...from].sort((a, b) => b.seeders - a.seeders)[0];
-}
 
 interface SearchProps {
   query: string;
@@ -63,6 +55,13 @@ const TV_GENRES = [
   "Animation", "Fantasy", "Mystery", "Anime",
 ];
 
+// Per-tab genre chip section shown on a specific Discover category (not on "All").
+const TAB_GENRES: Partial<Record<DiscoverTab, { glyph: string; label: string; genres: string[] }>> = {
+  movies: { glyph: clapperboard, label: "Movies by genre", genres: MOVIE_GENRES },
+  tvshows: { glyph: tv, label: "TV by genre", genres: TV_GENRES },
+  anime: { glyph: animeIcon, label: "Anime by genre", genres: ANIME_GENRES },
+};
+
 export function Search({
   query,
   results,
@@ -80,6 +79,7 @@ export function Search({
   onSpotify,
 }: SearchProps) {
   const [value, setValue] = useState(query);
+  const [tab, setTab] = useState<DiscoverTab>("all");
   const [sort, setSort] = useState<SortKey>("popularity");
   const [category, setCategory] = useState<Category | "all">("all");
   const [format, setFormat] = useState<FormatFilter>("all");
@@ -114,12 +114,15 @@ export function Search({
 
   const visible = useMemo(() => {
     let list = results;
+    // The Discover category toggle filters by media section (anime is cross-cutting).
+    if (tab === "anime") list = list.filter((r) => isAnime(r));
+    else if (tab !== "all") list = list.filter((r) => sectionOf(r) === tab);
     if (category !== "all") list = list.filter((r) => r.category === category);
     if (format !== "all") list = list.filter((r) => streamFormat(r.title) === format);
     if (quality !== "all") list = list.filter((r) => qualityOf(r.title) === quality);
     if (wellSeeded) list = list.filter((r) => r.seeders >= 10);
     return sortCatalog(list, sort);
-  }, [results, category, format, quality, wellSeeded, sort]);
+  }, [results, tab, category, format, quality, wellSeeded, sort]);
 
   // ---- Discover billboard + carousels (the idle home) ----
   const pool = useMemo(
@@ -158,6 +161,10 @@ export function Search({
     () => [...sections.movies, ...sections.tvshows].filter((it) => isAnime(it)).sort((a, b) => b.seeders - a.seeders).slice(0, 24),
     [sections],
   );
+  // The current tab's local-library row (shown alongside its external trending row).
+  const tabSection: MediaSectionId | null = tab === "all" || tab === "anime" ? null : tab;
+  const localItems = tab === "anime" ? animeItems : tabSection ? sections[tabSection] : [];
+  const tabGenres = tab !== "all" ? TAB_GENRES[tab] : undefined;
 
   const idle = !query && !loading && !error;
   const showControls = !idle && !loading && !error && results.length > 0;
@@ -182,8 +189,16 @@ export function Search({
         </div>
       </div>
 
+      <div className="seg discover-tabs">
+        {DISCOVER_TABS.map((t) => (
+          <button key={t.id} className={tab === t.id ? "active" : ""} onClick={() => setTab(t.id)}>{t.label}</button>
+        ))}
+      </div>
+
       {idle ? (
         <div className="home">
+          {tab === "all" ? (
+          <>
           {featuredSlides.length > 0 && (
             <FeaturedCarousel items={featuredSlides} onFind={onSearch} />
           )}
@@ -297,6 +312,33 @@ export function Search({
               </div>
             </section>
           </div>
+          </>
+          ) : (
+            <>
+              <DiscoverTrending category={tab} onSearch={onSearch} />
+              {localItems.length > 0 && (
+                <PosterRow title="In your library" count={localItems.length}>
+                  {localItems.slice(0, 24).map((it) => (
+                    <PosterCard key={it.id} item={it} square={tab === "music"} onPlay={() => onPlay(it)} onQueue={() => onQueue(it)} />
+                  ))}
+                </PosterRow>
+              )}
+              {tabGenres && (
+                <div className="home-chips">
+                  <section className="search-sec">
+                    <div className="search-sec-head">
+                      <span className="search-sec-title"><Icon icon={tabGenres.glyph} size="sm" /> {tabGenres.label}</span>
+                    </div>
+                    <div className="chip-row">
+                      {tabGenres.genres.map((g) => (
+                        <button key={g} className="search-chip" onClick={() => onSearch(tab === "anime" ? (g === "Anime" ? "anime" : `anime ${g}`) : g)}>{g}</button>
+                      ))}
+                    </div>
+                  </section>
+                </div>
+              )}
+            </>
+          )}
         </div>
       ) : (
         <>

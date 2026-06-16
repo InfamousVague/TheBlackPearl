@@ -3,18 +3,18 @@ import { useDownloaded } from "../ipc/libraryCache";
 import { IS_IOS } from "../lib/platform";
 import {
   library, compass, tv, clapperboard, music, anime,
-  folderDown, folderOutput, rss, settings2, sparkles,
+  book, gamepad2, folderDown, folderOutput, rss, settings2, sparkles,
 } from "../lib/icons";
 
 // Tabs whose content comes from the on-disk library scan — hovering one warms the
 // shared cache so the click lands on already-loaded data.
-const LIBRARY_TABS = new Set<NavId>(["library", "movies", "tvshows", "anime", "music", "downloads"]);
+const LIBRARY_TABS = new Set<NavId>(["library", "movies", "tvshows", "anime", "music", "books", "games", "downloads"]);
 
 // Top-level navigation ids. The first group are content sections shown in the rail's
 // top cluster; the second are management destinations in the bottom cluster.
 // ("playlists" lives inside the Music tab now, not the rail.)
 export type NavId =
-  | "library" | "discover" | "tvshows" | "anime" | "movies" | "music"
+  | "library" | "discover" | "tvshows" | "anime" | "movies" | "music" | "books" | "games"
   | "playlists" | "downloads" | "export" | "automation" | "sources" | "settings";
 
 interface RailEntry {
@@ -43,6 +43,8 @@ export function NavigationRail({ active, onNavigate, downloadCount, sourceCount 
     { id: "anime", label: "Anime", icon: anime },
     { id: "movies", label: "Movies", icon: clapperboard },
     { id: "music", label: "Music", icon: music },
+    { id: "books", label: "Books", icon: book },
+    { id: "games", label: "Games", icon: gamepad2 },
   ];
   const bottom: RailEntry[] = [
     { id: "downloads", label: "Downloads", icon: folderDown, count: downloadCount },

@@ -19,10 +19,12 @@ import {
 } from "../ipc/library";
 import { formatBytes } from "../lib/format";
 import {
+  book,
   circleCheck,
   clapperboard,
   folder,
   folderOutput,
+  gamepad2,
   hardDriveUpload,
   music,
   rotateCw,
@@ -41,7 +43,7 @@ const TARGET_LABEL: Record<ExportTarget, string> = {
   apple_music: "Apple Music",
   generic: "folder",
 };
-const TYPE_ICON: Record<string, string> = { movie: clapperboard, show: tv, music };
+const TYPE_ICON: Record<string, string> = { movie: clapperboard, show: tv, music, book, game: gamepad2 };
 
 export function Export() {
   const [items, setItems] = useState<Exportable[]>([]);

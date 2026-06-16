@@ -435,8 +435,8 @@ export interface DownloadedItem {
   id: string;
   title: string;
   fileName: string;
-  kind: "video" | "audio";
-  mediaType: "movie" | "show" | "music";
+  kind: "video" | "audio" | "book" | "game";
+  mediaType: "movie" | "show" | "music" | "book" | "game";
   season: number | null;
   episode: number | null;
   /** Embedded audio tags (music only) — the Music view groups by these. */
@@ -456,7 +456,7 @@ export interface DownloadedItem {
   inLibrary: boolean;
 }
 
-/** Everything downloaded to disk (movies / shows / music) with ready-to-play URLs.
+/** Everything downloaded to disk (movies / shows / music / books / games) with ready-to-play URLs.
  *  Companion mode (iOS + linked desktop): mirrors the linked desktop's on-disk Library.
  *  Item `url`s come back as the desktop's loopback URLs — call `resolveLocalPlayUrl(item)`
  *  at play time to turn them into a token-bearing URL on the desktop. */
@@ -517,14 +517,19 @@ export function importFromBrowser(sourceName: string): Promise<number> {
   return invoke<number>("import_from_browser", { sourceName });
 }
 
+/** Download a direct HTTP(S) file into Ghosty's download folder (desktop only flow). */
+export function downloadHttpFile(url: string, title?: string): Promise<string> {
+  return invoke<string>("download_http_file", { url, title: title ?? null });
+}
+
 // ---- export to media libraries (Plex / Apple Music / generic folder) ----
 
 export interface Exportable {
   path: string;
   fileName: string;
   sizeBytes: number;
-  kind: "video" | "audio";
-  mediaType: "movie" | "show" | "music";
+  kind: "video" | "audio" | "book" | "game";
+  mediaType: "movie" | "show" | "music" | "book" | "game";
   title: string;
   year?: number | null;
   season?: number | null;

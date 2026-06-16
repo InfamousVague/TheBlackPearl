@@ -582,6 +582,9 @@ body {
 /* Music ↔ Playlists sub-tab toggle at the top of the Music section. */
 .music-tabbar { margin-bottom: 14px; }
 
+/* Discover category switcher (under the hero search). Wraps on narrow widths. */
+.discover-tabs { margin: -6px 0 16px; flex-wrap: wrap; }
+
 /* ---------- Search home ---------- */
 .search-page { max-width: 1100px; margin: 0 auto; }
 
@@ -1575,6 +1578,68 @@ body {
 .ctx-item.danger:hover { background: color-mix(in srgb, var(--gg-hot) 14%, transparent); }
 .ctx-item.divided { margin-top: 4px; border-top: 1px solid var(--gg-border); padding-top: 10px; }
 
+/* "Add to playlist" flyout (built on .ctx-menu). */
+.atp-menu { width: 260px; max-width: 86vw; }
+.atp-head {
+  padding: 4px 10px 8px;
+  font-size: var(--text-xs-size);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--gg-text-muted);
+}
+.atp-create { color: var(--gg-accent); }
+.atp-create .icon { color: var(--gg-accent); }
+.atp-new { display: flex; align-items: center; gap: 6px; padding: 2px 4px 4px; }
+.atp-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  background: var(--gg-surface-2);
+  border: 1px solid var(--gg-border);
+  border-radius: 7px;
+  color: var(--gg-text);
+  font: inherit;
+  font-size: var(--text-sm-size);
+}
+.atp-input:focus { outline: none; border-color: var(--gg-accent); }
+.atp-go {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 7px;
+  background: var(--gg-accent);
+  color: #fff;
+  cursor: pointer;
+}
+.atp-go:disabled { opacity: 0.5; cursor: default; }
+.atp-sep { height: 1px; margin: 5px 6px; background: var(--gg-border); }
+.atp-list { max-height: 240px; overflow-y: auto; }
+.atp-item .atp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.atp-item .atp-count { flex: none; font-size: var(--text-xs-size); color: var(--gg-text-muted); font-variant-numeric: tabular-nums; }
+.atp-item:disabled { opacity: 0.6; cursor: default; }
+.atp-state { padding: 12px; text-align: center; color: var(--gg-text-dim); font-size: var(--text-sm-size); }
+
+/* Transient "Added to playlist" toast. */
+.atp-toast {
+  position: fixed;
+  z-index: 9600;
+  left: 50%;
+  bottom: 104px;
+  transform: translateX(-50%);
+  padding: 10px 16px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-default);
+  border-radius: 999px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  color: var(--gg-text);
+  font-size: var(--text-sm-size);
+  animation: ctx-in 0.14s var(--ease-out, ease);
+}
+
 /* ---------- Content cards on the solid-black shell ----------
    The glass-over-water effect was removed, so cards are opaque surfaces. */
 .content .card {
@@ -1942,13 +2007,36 @@ html, body { overscroll-behavior: none; }
 /* ---------- YouTube-style video player ---------- */
 .player.yt { display: block; height: auto; }
 
-.yt-stage {
+/* Wrapper holds the video stage + an ambient "light bleed" canvas behind it. */
+.yt-stagewrap {
   position: relative;
   width: 100%;
   max-width: 1180px;
+  margin: 0 auto;
+  isolation: isolate;
+}
+/* YouTube-style ambient glow: the current frame, scaled up + heavily blurred, painted
+   behind the player so its colors bleed past the video edges. */
+.yt-ambient {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius-lg);
+  transform: scale(1.07);
+  filter: blur(64px) saturate(1.6);
+  opacity: 0.6;
+  pointer-events: none;
+  transition: opacity 0.5s ease;
+}
+.yt-stage {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
   aspect-ratio: 16 / 9;
   max-height: calc(100vh - 230px);
-  margin: 0 auto;
+  margin: 0;
   background: #000;
   border-radius: var(--radius-lg);
   overflow: hidden;

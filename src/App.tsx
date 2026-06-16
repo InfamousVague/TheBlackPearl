@@ -10,6 +10,8 @@ import { Search } from "./views/Search";
 import { TvShows } from "./views/TvShows";
 import { Music } from "./views/Music";
 import { Movies } from "./views/Movies";
+import { Books } from "./views/Books";
+import { Games } from "./views/Games";
 import { Anime } from "./views/Anime";
 import { Digest } from "./views/Digest";
 import { Library } from "./views/Library";
@@ -41,6 +43,7 @@ import {
   fetchPosters,
   getSetting,
   importFromBrowser,
+  downloadHttpFile,
   listCatalog,
   listDownloaded,
   listLibrary,
@@ -48,6 +51,7 @@ import {
   listSources,
   mergeCatalog,
   openBrowser,
+  revealPath,
   refreshSource,
   removeSource,
   resolveLocalPlayUrl,
@@ -62,13 +66,15 @@ import {
 type AppView = NavId | "player";
 
 const RECENTS_KEY = "ghosty.recents";
+const MAGNET_RE = /^magnet:\?xt=urn:btih:/i;
+const HTTP_URL_RE = /^https?:\/\//i;
 // Preset launch points + trending terms shown on the Discover home.
 const POPULAR = [
   "1080p", "4K", "Documentary", "Sci-Fi", "Soundtrack",
   "FLAC", "Blender", "Public Domain", "Anime", "Concert",
 ];
 // The rail ids that map to a browsable content section.
-const MEDIA_SECTIONS: MediaSectionId[] = ["movies", "tvshows", "music"];
+const MEDIA_SECTIONS: MediaSectionId[] = ["movies", "tvshows", "music", "books", "games"];
 
 function loadRecents(): string[] {
   try {
@@ -85,6 +91,14 @@ function saveRecents(r: string[]) {
   } catch {
     /* ignore quota / private-mode failures */
   }
+}
+
+function isTorrentMagnet(link: string): boolean {
+  return MAGNET_RE.test(link.trim());
+}
+
+function isHttpUrl(link: string): boolean {
+  return HTTP_URL_RE.test(link.trim());
 }
 
 // Browser-preview-only sample (no Rust engine). Replaced by real librqbit streams in Tauri.
@@ -477,7 +491,7 @@ export default function App() {
       byId.set(it.id, { ...it, poster: it.poster ?? existing?.poster });
     }
     const groups: Record<MediaSectionId, LibraryItem[]> = {
-      movies: [], tvshows: [], music: [],
+      movies: [], tvshows: [], music: [], books: [], games: [],
     };
     for (const it of byId.values()) {
       const m = metaById.get(it.id);
@@ -693,6 +707,28 @@ export default function App() {
 
   /** Non-media item: queue the download and show it in Downloads — no player, no ffmpeg. */
   async function startFileDownload(item: CatalogItem) {
+    const link = item.magnet.trim();
+    if (!isTorrentMagnet(link) && isHttpUrl(link)) {
+      if (!IN_TAURI) {
+        window.open(link, "_blank", "noopener,noreferrer");
+      } else if (!IS_IOS) {
+        try {
+          await downloadHttpFile(link, item.title);
+          refreshLibrary();
+          return;
+        } catch (e) {
+          try {
+            await openBrowser(link);
+          } catch (e2) {
+            console.error("open linked source failed", e2);
+          }
+        }
+      } else {
+        setSearchError("This result opens on the source website. Open it on desktop to continue.");
+      }
+      return;
+    }
+
     previews.current.delete(item.id); // an explicit download is kept, not a preview
     setView("downloads");
     if (!IN_TAURI) {
@@ -715,6 +751,28 @@ export default function App() {
    *  Stays on the current view; the download surfaces in Downloads (and the Library
    *  once it finishes). */
   async function downloadToLibrary(item: CatalogItem) {
+    const link = item.magnet.trim();
+    if (!isTorrentMagnet(link) && isHttpUrl(link)) {
+      if (!IN_TAURI) {
+        window.open(link, "_blank", "noopener,noreferrer");
+      } else if (!IS_IOS) {
+        try {
+          await downloadHttpFile(link, item.title);
+          refreshLibrary();
+          return;
+        } catch (e) {
+          try {
+            await openBrowser(link);
+          } catch (e2) {
+            console.error("open linked source failed", e2);
+          }
+        }
+      } else {
+        setSearchError("This result opens on the source website. Open it on desktop to continue.");
+      }
+      return;
+    }
+
     previews.current.delete(item.id); // explicit download — keep it
     if (!IN_TAURI) {
       setDownloads((d) => upsert(d, mockStats(item.id, item.title)));
@@ -742,12 +800,32 @@ export default function App() {
       return;
     }
     const url = await resolveLocalPlayUrl(item).catch(() => item.url);
+    if (item.kind === "book" || item.mediaType === "book") {
+      if (IN_TAURI && !IS_IOS) {
+        try {
+          await openBrowser(url);
+          return;
+        } catch {
+          /* fall through to a normal browser open */
+        }
+      }
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (item.kind === "game" || item.mediaType === "game") {
+      if (IN_TAURI && !IS_IOS) {
+        await revealPath(item.id).catch(() => {});
+        return;
+      }
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
     const id = `local:${item.id}`;
     setStreamItems((s) => ({
       ...s,
       [id]: {
         title: item.title,
-        kind: item.kind,
+        kind: "video",
         poster: posterForTitle(item.title),
         url,
         relpath: item.id,
@@ -1131,6 +1209,10 @@ export default function App() {
               </>
             ) : activeSection === "movies" ? (
               <Movies onPlayLocal={playLocal} posterFor={posterForTitle} onReplacePoster={setReplaceTitle} />
+            ) : activeSection === "books" ? (
+              <Books onOpenLocal={playLocal} posterFor={posterForTitle} />
+            ) : activeSection === "games" ? (
+              <Games onOpenLocal={playLocal} posterFor={posterForTitle} />
             ) : null}
             {view === "anime" && (
               <Anime onPlayLocal={playLocal} posterFor={posterForTitle} onReplacePoster={setReplaceTitle} onBrowse={handleSearch} />

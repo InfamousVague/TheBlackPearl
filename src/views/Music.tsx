@@ -6,6 +6,7 @@ import { Chip } from "@mattmattmattmatt/base/primitives/chip/Chip";
 import { PosterRow } from "../components/PosterRow";
 import { PosterGridSkeleton } from "../components/Skeletons";
 import { useContextMenu, type MenuAction } from "../components/ContextMenu";
+import { AddToPlaylistMenu } from "../components/AddToPlaylistMenu";
 import { IN_TAURI } from "../ipc/engine";
 import {
   musicSpotiFlacInstall,
@@ -21,11 +22,11 @@ import {
   type MusicSpotiFlacStatus,
 } from "../ipc/library";
 import { useDownloaded } from "../ipc/libraryCache";
-import { spotifyToPlaylist } from "../ipc/playlists";
+import { spotifyToPlaylist, type PlaylistTrack } from "../ipc/playlists";
 import { spotifyPlaylistPreview, type SpotifyTrack } from "../ipc/spotify";
 import { hueFromString } from "../lib/catalog";
 import { formatBytes } from "../lib/format";
-import { chevronLeft, circlePlay, disc3, download, folderOpen, images, library, link2, micVocal, music, rotateCw, sparkles, trash2, triangleAlert } from "../lib/icons";
+import { chevronLeft, circlePlay, disc3, download, folderOpen, images, library, link2, listMusic, micVocal, music, rotateCw, sparkles, trash2, triangleAlert } from "../lib/icons";
 import { IS_IOS } from "../lib/platform";
 import "./Music.css";
 
@@ -235,6 +236,49 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
   const downloadConcurrencyRef = useRef(2);
   const queuePumpRef = useRef<(() => void) | null>(null);
   const ctx = useContextMenu();
+
+  // "Add to playlist" flyout — opened from a context-menu item, anchored at the right-click.
+  // The menu's onSelect carries no event, so we capture the last right-click position here.
+  const menuPos = useRef({ x: 0, y: 0 });
+  const [addToPl, setAddToPl] = useState<{ x: number; y: number; tracks: PlaylistTrack[] } | null>(null);
+  const [atpMsg, setAtpMsg] = useState<string | null>(null);
+  useEffect(() => {
+    const onCtx = (e: globalThis.MouseEvent) => { menuPos.current = { x: e.clientX, y: e.clientY }; };
+    window.addEventListener("contextmenu", onCtx, true);
+    return () => window.removeEventListener("contextmenu", onCtx, true);
+  }, []);
+  useEffect(() => {
+    if (!atpMsg) return;
+    const id = window.setTimeout(() => setAtpMsg(null), 2600);
+    return () => window.clearTimeout(id);
+  }, [atpMsg]);
+
+  /** Map music tracks → playlist tracks (the backend resolves the local file by title). */
+  const toPlTracks = (items: ParsedTrack[]): PlaylistTrack[] =>
+    items.map((p) => ({
+      title: p.track || p.item.title,
+      artist: p.artist || "",
+      album: p.album || "",
+      durationMs: 0,
+    }));
+  const openAddToPlaylist = (tracks: PlaylistTrack[]) =>
+    setAddToPl({ x: menuPos.current.x, y: menuPos.current.y, tracks });
+
+  // Rendered alongside the context menu in every view branch (both portal to <body>).
+  const playlistOverlay = (
+    <>
+      {addToPl && (
+        <AddToPlaylistMenu
+          x={addToPl.x}
+          y={addToPl.y}
+          tracks={addToPl.tracks}
+          onClose={() => setAddToPl(null)}
+          onAdded={(m) => setAtpMsg(m)}
+        />
+      )}
+      {atpMsg && <div className="atp-toast" role="status">{atpMsg}</div>}
+    </>
+  );
 
   useEffect(() => {
     downloadConcurrencyRef.current = downloadConcurrency;
@@ -448,6 +492,7 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
   function trackActions(p: ParsedTrack): MenuAction[] {
     return [
       { label: "Play", icon: circlePlay, onSelect: () => onPlayLocal(p.item) },
+      { label: "Add to playlist…", icon: listMusic, onSelect: () => openAddToPlaylist(toPlTracks([p])) },
       { label: "Reveal in Finder", icon: folderOpen, onSelect: () => void revealPath(p.item.id) },
       { label: "Remove from library", icon: library, divider: true, onSelect: () => void removeFromLibrary(p.item.id).then(() => refresh()) },
       { label: "Move to Trash", icon: trash2, danger: true, onSelect: () => void trashDownloaded(p.item.id).then(() => refresh()) },
@@ -459,6 +504,7 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
     const ids = al.tracks.map((t) => t.item.id);
     const actions: MenuAction[] = [
       { label: "Play album", icon: circlePlay, onSelect: () => onPlayLocal(al.tracks[0].item) },
+      { label: "Add album to playlist…", icon: listMusic, onSelect: () => openAddToPlaylist(toPlTracks(al.tracks)) },
       { label: "Reveal in Finder", icon: folderOpen, onSelect: () => void revealPath(ids[0]) },
     ];
     if (onReplacePoster) actions.push({ label: "Replace cover…", icon: images, onSelect: () => onReplacePoster(al.album) });
@@ -475,6 +521,7 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
     const ids = tracks.map((t) => t.item.id);
     const actions: MenuAction[] = [
       { label: "Play", icon: circlePlay, onSelect: () => onPlayLocal(tracks[0].item) },
+      { label: "Add to playlist…", icon: listMusic, onSelect: () => openAddToPlaylist(toPlTracks(tracks)) },
       { label: "Reveal in Finder", icon: folderOpen, onSelect: () => void revealPath(ids[0]) },
     ];
     if (onReplacePoster) actions.push({ label: "Replace image…", icon: images, onSelect: () => onReplacePoster(ar.name) });
@@ -750,7 +797,7 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
             </div>
           ))}
         </div>
-        {ctx.menu}
+        {ctx.menu}{playlistOverlay}
       </div>
     );
   }
@@ -779,7 +826,7 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
             <AlbumCard key={al.key} album={al} onClick={() => setAlbumKey(al.key)} onContextMenu={(e) => ctx.open(e, albumActions(al))} />
           ))}
         </div>
-        {ctx.menu}
+        {ctx.menu}{playlistOverlay}
       </div>
     );
   }
@@ -812,7 +859,7 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
             <AlbumCard key={al.key} album={al} onClick={() => setAlbumKey(al.key)} onContextMenu={(e) => ctx.open(e, albumActions(al))} />
           ))}
         </div>
-        {ctx.menu}
+        {ctx.menu}{playlistOverlay}
       </div>
     );
   }
@@ -1053,7 +1100,7 @@ export function Music({ onPlayLocal, onReplacePoster }: MusicProps) {
           )}
         </div>
       )}
-      {ctx.menu}
+      {ctx.menu}{playlistOverlay}
     </div>
   );
 }

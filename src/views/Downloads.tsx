@@ -12,7 +12,7 @@ import { hueFromString } from "../lib/catalog";
 import { IS_IOS } from "../lib/platform";
 import { formatBytes, formatBytesPerSec, formatCount } from "../lib/format";
 import {
-  arrowDown, arrowUp, circlePlay, clapperboard, folderDown, folderOpen, images, music,
+  arrowDown, arrowUp, book, circlePlay, clapperboard, folderDown, folderOpen, gamepad2, images, music,
   pause, play, plusCircle, rotateCw, trash2, tv, users, x,
 } from "../lib/icons";
 
@@ -291,7 +291,7 @@ function GroupCard({ group, poster, onAdd, onContextMenu }: { group: DiskGroup; 
 function DiskCard({ item, poster, onPlay, onContextMenu }: { item: DownloadedItem; poster?: string; onPlay: () => void; onContextMenu: (e: MouseEvent) => void }) {
   const hue = hueFromString(item.title);
   const bg = `linear-gradient(150deg, hsl(${hue} 32% 24%), hsl(${(hue + 40) % 360} 42% 13%))`;
-  const glyph = item.mediaType === "music" ? music : item.mediaType === "show" ? tv : clapperboard;
+  const glyph = item.mediaType === "music" ? music : item.mediaType === "show" ? tv : item.mediaType === "book" ? book : item.mediaType === "game" ? gamepad2 : clapperboard;
   return (
     <div className="poster-card" onClick={onPlay} onContextMenu={onContextMenu} role="button" tabIndex={0}>
       <div className="poster" style={poster ? undefined : { background: bg }}>

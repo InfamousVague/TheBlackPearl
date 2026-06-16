@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
+use sha1::{Digest as Sha1Digest, Sha1};
 
 use crate::catalog::CatalogItem;
 
@@ -14,11 +15,21 @@ use crate::catalog::CatalogItem;
 /// JavaScript front-ends with no server-rendered listings — they fetch from here — so any
 /// TPB mirror URL is made to work by falling back to apibay.
 const APIBAY: &str = "https://apibay.org";
+const ANNAS_BASE: &str = "https://annas-archive.cc";
 
 /// Does this URL point at a Pirate Bay mirror (so the apibay JSON API is the real source)?
 fn is_tpb(url: &str) -> bool {
     let u = url.to_lowercase();
     u.contains("piratebay") || u.contains("apibay") || u.contains("thepiratebay")
+}
+
+fn is_annas(url: &str) -> bool {
+    url.to_lowercase().contains("annas-archive")
+}
+
+fn is_zlib(url: &str) -> bool {
+    let u = url.to_lowercase();
+    u.contains("z-library") || u.contains("zlibrary") || u.contains("z-lib") || u.contains("singlelogin")
 }
 
 pub async fn run_source(kind: &str, url: &str, source_name: &str, now_ms: i64) -> Result<Vec<CatalogItem>> {
@@ -34,7 +45,7 @@ pub async fn run_source(kind: &str, url: &str, source_name: &str, now_ms: i64) -
         _ => {
             // SubsPlease/Nyaa ship structured APIs, not server-rendered magnets — route
             // them to their adapters even if the source wasn't explicitly typed "adapter".
-            if is_subsplease(url) || is_nyaa(url) {
+            if is_subsplease(url) || is_nyaa(url) || is_annas(url) || is_zlib(url) {
                 return adapter_source(url, source_name, now_ms).await;
             }
             let body = http_get(url).await?;
@@ -87,6 +98,9 @@ fn classify_body(body: &str) -> &'static str {
         return "magnet links";
     }
     let head = body.get(..body.len().min(6000)).unwrap_or(body).to_lowercase();
+    if head.contains("checking your browser") || head.contains("c_token=") {
+        return "bot check";
+    }
     if head.contains("just a moment") || head.contains("cf-browser-verification") || head.contains("challenge-platform") {
         return "Cloudflare bot check";
     }
@@ -191,6 +205,12 @@ pub async fn test_source(kind: &str, url: &str, source_name: &str, now: i64) -> 
 async fn adapter_source(url: &str, source_name: &str, now: i64) -> Result<Vec<CatalogItem>> {
     if is_1337x(url) {
         return x1337_browse(url, source_name, now).await;
+    }
+    if is_annas(url) {
+        return annas_browse(url, source_name, now).await;
+    }
+    if is_zlib(url) {
+        return zlib_browse(url, source_name, now).await;
     }
     if is_subsplease(url) {
         return subsplease_browse(url, source_name, now).await;
@@ -583,6 +603,12 @@ pub async fn search_source(
     if is_1337x(url) {
         return x1337_search(url, q, source_name, now).await;
     }
+    if is_annas(url) {
+        return annas_search(url, q, source_name, now).await;
+    }
+    if is_zlib(url) {
+        return zlib_search(url, q, source_name, now).await;
+    }
     if is_subsplease(url) {
         return subsplease_search(url, q, source_name, now).await;
     }
@@ -693,7 +719,16 @@ fn percent_decode(s: &str) -> String {
 }
 
 fn html_unescape(s: &str) -> String {
-    s.replace("&amp;", "&").replace("&#38;", "&").replace("&#x26;", "&")
+    s.replace("&amp;", "&")
+        .replace("&#38;", "&")
+        .replace("&#x26;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#34;", "\"")
+        .replace("&apos;", "'")
+        .replace("&#39;", "'")
+        .replace("&#039;", "'")
+        .replace("&nbsp;", " ")
+        .replace('\u{a0}', " ")
 }
 
 fn guess_category(title: &str) -> String {
@@ -711,6 +746,414 @@ fn guess_category(title: &str) -> String {
         "other"
     }
     .to_string()
+}
+
+// ---- Anna's Archive + Z-Library adapters ----
+
+fn annas_base(url: &str) -> String {
+    let b = base_host(url);
+    if b.starts_with("http") && is_annas(&b) {
+        b
+    } else {
+        ANNAS_BASE.to_string()
+    }
+}
+
+fn absolute_url(base: &str, href: &str) -> String {
+    if href.starts_with("http://") || href.starts_with("https://") {
+        return href.to_string();
+    }
+    if href.starts_with("//") {
+        return format!("https:{href}");
+    }
+    let base = base.trim_end_matches('/');
+    if href.starts_with('/') {
+        format!("{base}{href}")
+    } else {
+        format!("{base}/{}", href.trim_start_matches('/'))
+    }
+}
+
+fn annas_query_url(base: &str, query: Option<&str>) -> String {
+    match query.map(str::trim).filter(|q| !q.is_empty()) {
+        Some(q) => format!("{}/s/?q={}", base.trim_end_matches('/'), urlencode(q)),
+        None => format!("{}/s/", base.trim_end_matches('/')),
+    }
+}
+
+fn parse_annas_results(base: &str, body: &str, source_name: &str, now: i64) -> Vec<CatalogItem> {
+    let marker = "checkBookDownloaded itemCoverWrapper";
+    if !body.contains(marker) {
+        return Vec::new();
+    }
+
+    let id_re = regex::Regex::new(r#"data-book_id="(\d+)""#).unwrap();
+    let link_re = regex::Regex::new(r#"href="([^"]*/book/\d+)""#).unwrap();
+    let title_re = regex::Regex::new(r#"(?s)<h3[^>]*itemprop="name"[^>]*>\s*<a [^>]*>(.*?)</a>"#).unwrap();
+    let alt_re = regex::Regex::new(r#"alt="([^"]+)""#).unwrap();
+    let cover_re = regex::Regex::new(r#"<img[^>]+(?:data-src|src)="([^"]+)""#).unwrap();
+    let year_re = regex::Regex::new(r#"(?s)property_year.*?property_value[^>]*>\s*([^<]+?)\s*<"#).unwrap();
+    let lang_re = regex::Regex::new(r#"(?s)property_language.*?property_value[^>]*>\s*([^<]+?)\s*<"#).unwrap();
+    let pub_re = regex::Regex::new(r#"(?s)itemprop="publisher".*?<span itemprop="name">([^<]+)</span>"#).unwrap();
+
+    let starts: Vec<usize> = body.match_indices(marker).map(|(i, _)| i).collect();
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for (idx, start) in starts.iter().enumerate() {
+        let end = starts.get(idx + 1).copied().unwrap_or(body.len());
+        let row = &body[*start..end];
+
+        let Some(book_id) = id_re.captures(row).map(|c| c[1].to_string()) else {
+            continue;
+        };
+        let id = format!("annas:{book_id}");
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+
+        let href = link_re
+            .captures(row)
+            .map(|c| c[1].to_string())
+            .unwrap_or_else(|| format!("/book/{book_id}"));
+        let detail_url = absolute_url(base, &href);
+
+        let title = title_re
+            .captures(row)
+            .map(|c| html_unescape(c[1].trim()))
+            .filter(|s| !s.is_empty())
+            .or_else(|| alt_re.captures(row).map(|c| html_unescape(c[1].trim())))
+            .unwrap_or_else(|| format!("Book {book_id}"));
+
+        let poster = cover_re
+            .captures(row)
+            .map(|c| absolute_url(base, &html_unescape(c[1].trim())))
+            .filter(|u| !u.contains("/img/no-cover.webp"));
+
+        let year = year_re.captures(row).and_then(|c| c[1].trim().parse::<i64>().ok());
+        let language = lang_re
+            .captures(row)
+            .map(|c| html_unescape(c[1].trim()))
+            .filter(|s| !s.is_empty());
+        let publisher = pub_re
+            .captures(row)
+            .map(|c| html_unescape(c[1].trim()))
+            .filter(|s| !s.is_empty());
+
+        let mut meta = Vec::new();
+        if let Some(l) = language {
+            meta.push(l);
+        }
+        if let Some(y) = year {
+            meta.push(y.to_string());
+        }
+        if let Some(p) = publisher {
+            meta.push(p);
+        }
+        let description = (!meta.is_empty()).then(|| format!("Anna's Archive · {}", meta.join(" · ")));
+
+        out.push(CatalogItem {
+            id,
+            category: "books".to_string(),
+            title,
+            // For book adapters, this is a detail URL (opened in the app browser),
+            // not a torrent magnet.
+            magnet: detail_url,
+            size_bytes: 0,
+            seeders: 0,
+            leechers: 0,
+            source: source_name.to_string(),
+            added_at: now,
+            files: None,
+            poster,
+            description,
+            year,
+        });
+    }
+    out
+}
+
+async fn annas_search(url: &str, query: &str, source_name: &str, now: i64) -> Result<Vec<CatalogItem>> {
+    let base = annas_base(url);
+    let body = http_get(&annas_query_url(&base, Some(query))).await?;
+    Ok(parse_annas_results(&base, &body, source_name, now))
+}
+
+async fn annas_browse(url: &str, source_name: &str, now: i64) -> Result<Vec<CatalogItem>> {
+    let base = annas_base(url);
+    let body = http_get(&annas_query_url(&base, None)).await?;
+    Ok(parse_annas_results(&base, &body, source_name, now))
+}
+
+fn looks_like_zlib_bot_gate(body: &str) -> bool {
+    let head = body.get(..body.len().min(8000)).unwrap_or(body).to_lowercase();
+    head.contains("checking your browser")
+        || head.contains("wait a moment")
+        || head.contains("c_token=")
+        || head.contains("cookies are required")
+}
+
+fn zlib_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15")
+        .timeout(Duration::from_secs(25))
+        .build()
+        .context("build zlib client")
+}
+
+fn parse_js_num(s: &str) -> Option<usize> {
+    let t = s.trim();
+    if let Some(hex) = t.strip_prefix("0x") {
+        usize::from_str_radix(hex, 16).ok()
+    } else {
+        t.parse::<usize>().ok()
+    }
+}
+
+fn zlib_extract_challenge_seed(body: &str) -> Option<String> {
+    let arr_re = regex::Regex::new(r#"const\s+a0_0x[0-9a-fA-F]+\s*=\s*\[(.*?)\];"#).ok()?;
+    let rot_re = regex::Regex::new(r#"\}\(a0_0x[0-9a-fA-F]+\s*,\s*([0-9xXa-fA-F]+)\s*\)\s*\)\s*;?"#).ok()?;
+    let idx_re = regex::Regex::new(r#"let\s+c\s*=\s*a0_0x[0-9a-fA-F]+\('([^']+)'\)"#).ok()?;
+    let str_re = regex::Regex::new(r#"'([^']*)'"#).ok()?;
+
+    let arr_src = arr_re.captures(body)?.get(1)?.as_str();
+    let arr: Vec<String> = str_re
+        .captures_iter(arr_src)
+        .map(|c| c[1].to_string())
+        .collect();
+    if arr.is_empty() {
+        return None;
+    }
+
+    let rotate = rot_re
+        .captures(body)
+        .and_then(|c| parse_js_num(c.get(1)?.as_str()))
+        .unwrap_or(0)
+        % arr.len();
+
+    let idx = idx_re
+        .captures(body)
+        .and_then(|c| parse_js_num(c.get(1)?.as_str()))
+        .unwrap_or(0)
+        % arr.len();
+
+    // The obfuscated script left-rotates the string array `rotate` times, then reads `idx`.
+    // Reading index i from a left-rotated array maps to original index (i + rotate) % len.
+    Some(arr[(idx + rotate) % arr.len()].clone())
+}
+
+fn zlib_solve_challenge_token(seed: &str) -> Option<String> {
+    let n1 = seed.chars().next()?.to_digit(16)? as usize;
+    if n1 + 1 >= 20 {
+        return None;
+    }
+    let mut hasher = Sha1::new();
+    for i in 0..=3_000_000u32 {
+        hasher.update(seed.as_bytes());
+        hasher.update(i.to_string().as_bytes());
+        let digest = hasher.finalize_reset();
+        if digest[n1] == 0xb0 && digest[n1 + 1] == 0x0b {
+            return Some(format!("{seed}{i}"));
+        }
+    }
+    None
+}
+
+async fn zlib_cookie_for_base(base: &str) -> Result<Option<String>> {
+    if !base.starts_with("http") {
+        return Ok(None);
+    }
+    let gate_url = format!("{}/", base.trim_end_matches('/'));
+    let body = zlib_client()?
+        .get(&gate_url)
+        .send()
+        .await
+        .context("zlib challenge request failed")?
+        .text()
+        .await
+        .context("zlib challenge read failed")?;
+    if !looks_like_zlib_bot_gate(&body) {
+        return Ok(None);
+    }
+    let Some(seed) = zlib_extract_challenge_seed(&body) else {
+        return Ok(None);
+    };
+    Ok(zlib_solve_challenge_token(&seed).map(|tok| format!("c_token={tok}; c_time=0.5")))
+}
+
+pub(crate) async fn zlib_cookie_header(url: &str) -> Option<String> {
+    let base = base_host(url);
+    zlib_cookie_for_base(&base).await.ok().flatten()
+}
+
+async fn zlib_get(url: &str) -> Result<String> {
+    let client = zlib_client()?;
+    let mut req = client.get(url);
+    if let Some(cookie) = zlib_cookie_header(url).await {
+        req = req.header(reqwest::header::COOKIE, cookie);
+    }
+    let resp = req.send().await.context("request failed")?;
+    anyhow::ensure!(resp.status().is_success(), "HTTP {}", resp.status());
+    Ok(resp.text().await?)
+}
+
+fn parse_zlib_results(base: &str, body: &str, source_name: &str, now: i64) -> Vec<CatalogItem> {
+    if !body.contains("<z-bookcard") {
+        return Vec::new();
+    }
+    let href_re = regex::Regex::new(r#"\bhref="([^"]+)""#).unwrap();
+    let dl_re = regex::Regex::new(r#"\bdownload="([^"]+)""#).unwrap();
+    let id_re = regex::Regex::new(r#"\bid="([^"]+)""#).unwrap();
+    let lang_re = regex::Regex::new(r#"\blanguage="([^"]*)""#).unwrap();
+    let year_re = regex::Regex::new(r#"\byear="([^"]*)""#).unwrap();
+    let ext_re = regex::Regex::new(r#"\bextension="([^"]*)""#).unwrap();
+    let size_re = regex::Regex::new(r#"\bfilesize="([^"]*)""#).unwrap();
+    let pub_re = regex::Regex::new(r#"\bpublisher="([^"]*)""#).unwrap();
+    let token_re = regex::Regex::new(r#"/book/([^/\"]+)"#).unwrap();
+    let title_re = regex::Regex::new(r#"(?s)<div\s+slot="title">\s*(.*?)\s*</div>"#).unwrap();
+    let author_re = regex::Regex::new(r#"(?s)<div\s+slot="author">\s*(.*?)\s*</div>"#).unwrap();
+    let cover_re = regex::Regex::new(r#"<img[^>]+data-src="([^"]*)""#).unwrap();
+
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for part in body.split("<z-bookcard").skip(1) {
+        let Some(close) = part.find("</z-bookcard>") else {
+            continue;
+        };
+        let card = &part[..close];
+        let Some(tag_end) = card.find('>') else {
+            continue;
+        };
+        let attrs = &card[..tag_end];
+        let inner = &card[tag_end + 1..];
+
+        let href = href_re
+            .captures(attrs)
+            .map(|c| c[1].to_string())
+            .unwrap_or_default();
+        if href.is_empty() {
+            continue;
+        }
+        let detail_url = absolute_url(base, &href);
+        let download_url = dl_re
+            .captures(attrs)
+            .map(|c| absolute_url(base, &c[1]))
+            .unwrap_or_else(|| detail_url.clone());
+
+        let id = token_re
+            .captures(&href)
+            .map(|c| format!("zlib:{}", c[1].to_lowercase()))
+            .or_else(|| id_re.captures(attrs).map(|c| format!("zlibid:{}", c[1].to_lowercase())))
+            .unwrap_or_else(|| format!("zlib:{}", href.to_lowercase()));
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+
+        let title = title_re
+            .captures(inner)
+            .map(|c| html_unescape(c[1].trim()))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| id.clone());
+        let author = author_re
+            .captures(inner)
+            .map(|c| html_unescape(c[1].trim()))
+            .unwrap_or_default();
+        let language = lang_re.captures(attrs).map(|c| html_unescape(c[1].trim())).unwrap_or_default();
+        let publisher = pub_re.captures(attrs).map(|c| html_unescape(c[1].trim())).unwrap_or_default();
+        let extension = ext_re.captures(attrs).map(|c| c[1].trim().to_ascii_uppercase()).unwrap_or_default();
+        let size_bytes = size_re
+            .captures(attrs)
+            .map(|c| parse_size(c[1].trim()))
+            .unwrap_or(0);
+        let year = year_re
+            .captures(attrs)
+            .and_then(|c| c[1].trim().parse::<i64>().ok())
+            .filter(|y| *y > 0);
+        let poster = cover_re
+            .captures(inner)
+            .map(|c| absolute_url(base, &html_unescape(c[1].trim())))
+            .filter(|u| !u.is_empty());
+
+        let mut meta = Vec::new();
+        if !author.is_empty() {
+            meta.push(author.clone());
+        }
+        if !language.is_empty() {
+            meta.push(language);
+        }
+        if !extension.is_empty() {
+            meta.push(extension);
+        }
+        if !publisher.is_empty() {
+            meta.push(publisher);
+        }
+        let description = (!meta.is_empty()).then(|| format!("Z-Library · {}", meta.join(" · ")));
+
+        out.push(CatalogItem {
+            id,
+            category: "books".to_string(),
+            title,
+            // Z-Library results carry a direct `/dl/...` endpoint that can be fetched
+            // in-app; when absent, we keep the detail URL as a fallback.
+            magnet: download_url,
+            size_bytes,
+            seeders: 0,
+            leechers: 0,
+            source: source_name.to_string(),
+            added_at: now,
+            files: None,
+            poster,
+            description,
+            year,
+        });
+    }
+    out
+}
+
+async fn zlib_search(url: &str, query: &str, source_name: &str, now: i64) -> Result<Vec<CatalogItem>> {
+    let base = base_host(url);
+    if base.starts_with("http") {
+        let q = urlencode(query);
+        for endpoint in [format!("{base}/s/{q}"), format!("{base}/s/?q={q}")] {
+            if let Ok(body) = zlib_get(&endpoint).await {
+                if looks_like_zlib_bot_gate(&body) {
+                    break;
+                }
+                let items = parse_zlib_results(&base, &body, source_name, now);
+                if !items.is_empty() {
+                    return Ok(items);
+                }
+                let items = parse_annas_results(&base, &body, source_name, now);
+                if !items.is_empty() {
+                    return Ok(items);
+                }
+            }
+        }
+    }
+
+    // Public Z-Library mirrors are commonly JS-gated for server-side clients.
+    // Anna mirrors the same corpus and serves static search HTML we can parse.
+    annas_search(ANNAS_BASE, query, source_name, now).await
+}
+
+async fn zlib_browse(url: &str, source_name: &str, now: i64) -> Result<Vec<CatalogItem>> {
+    let base = base_host(url);
+    if base.starts_with("http") {
+        let endpoint = format!("{base}/s/");
+        if let Ok(body) = zlib_get(&endpoint).await {
+            if !looks_like_zlib_bot_gate(&body) {
+                let items = parse_zlib_results(&base, &body, source_name, now);
+                if !items.is_empty() {
+                    return Ok(items);
+                }
+                let items = parse_annas_results(&base, &body, source_name, now);
+                if !items.is_empty() {
+                    return Ok(items);
+                }
+            }
+        }
+    }
+
+    annas_browse(ANNAS_BASE, source_name, now).await
 }
 
 // ---- 1337x adapter ----
@@ -1082,6 +1525,108 @@ async fn nyaa_browse(url: &str, source_name: &str, now: i64) -> Result<Vec<Catal
     let api = format!("{base}/?page=rss&c=0_0&f=0");
     let body = http_get(&api).await?;
     Ok(parse_nyaa_rss(&body, source_name, now))
+}
+
+#[cfg(test)]
+mod annas_tests {
+        use super::*;
+
+        const SAMPLE: &str = r#"
+<div class="checkBookDownloaded itemCoverWrapper" data-book_id="17098461" data-isbn="9781781103821">
+    <a href="https://annas-archive.cc/book/17098461" itemprop="url">
+        <img class="cover lazy" alt="Harry Potter" data-src="https://zlib-cdn.org/images/17000000/17098461.webp" />
+    </a>
+    <h3 itemprop="name">
+        <a href="https://annas-archive.cc/book/17098461" style="text-decoration: underline;">Harry Potter &amp; the Philosopher&#039;s Stone</a>
+    </h3>
+    <a href="https://annas-archive.cc/publisher/Pottermore" itemprop="publisher" itemtype="https://schema.org/Organization" itemscope=""><span itemprop="name">Pottermore Publishing</span></a>
+    <div class="bookProperty property_year">
+        <div class="property_value">2022</div>
+    </div>
+    <div class="bookProperty property_language">
+        <div class="property_value text-capitalize">English</div>
+    </div>
+</div>
+"#;
+
+    #[test]
+    fn parses_annas_card_into_book_item() {
+        let items = parse_annas_results(ANNAS_BASE, SAMPLE, "Anna", 1000);
+        assert_eq!(items.len(), 1);
+
+        let it = &items[0];
+        assert_eq!(it.id, "annas:17098461");
+        assert_eq!(it.category, "books");
+        assert_eq!(it.magnet, "https://annas-archive.cc/book/17098461");
+        assert_eq!(it.poster.as_deref(), Some("https://zlib-cdn.org/images/17000000/17098461.webp"));
+        assert_eq!(it.year, Some(2022));
+        assert_eq!(it.seeders, 0);
+        assert!(it.title.contains("Harry Potter & the Philosopher's Stone"));
+        assert!(it.description.as_deref().unwrap_or("").contains("English"));
+        assert!(it.description.as_deref().unwrap_or("").contains("Pottermore Publishing"));
+    }
+
+    #[test]
+    fn no_cards_yields_empty() {
+        assert!(parse_annas_results(ANNAS_BASE, "<html>no cards</html>", "Anna", 0).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod zlib_tests {
+    use super::*;
+
+    const SEARCH_CARD: &str = r#"
+<div class="book-item resItemBoxBooks ">
+  <z-bookcard
+    id="120281017"
+    href="/book/EJQNWjvqZ7/the-complete-harry-potter.html"
+    download="/dl/pvd1DNpn9X"
+    publisher=""
+    language="English"
+    year="1800"
+    extension="pdf"
+    filesize="21.51 MB"
+  >
+    <img data-src="https://s3proxy-alp2-covers.cdn-zlib.sk/covers100/sample.jpg" />
+    <div slot="title">The Complete Harry Potter</div>
+    <div slot="author">J. K. Rowling</div>
+  </z-bookcard>
+</div>
+"#;
+
+    const CHALLENGE: &str = r#"
+<script>
+const a0_0x2a54=['561F94EF40EF56D9505271292065B950A74EC22F','c_token=','array'];
+(function(_0x41abf3,_0x2a548e){const _0x4457dc=function(_0x804ad2){while(--_0x804ad2){_0x41abf3['push'](_0x41abf3['shift']());}};_0x4457dc(++_0x2a548e);}(a0_0x2a54,0x178));
+const a0_0x4457=function(_0x41abf3,_0x2a548e){_0x41abf3=_0x41abf3-0x0;let _0x4457dc=a0_0x2a54[_0x41abf3];return _0x4457dc;};
+let c=a0_0x4457('0x2');
+</script>
+"#;
+
+    #[test]
+    fn parses_zlib_card_into_direct_download_item() {
+        let items = parse_zlib_results("https://z-library.im", SEARCH_CARD, "Z-Lib", 1000);
+        assert_eq!(items.len(), 1);
+        let it = &items[0];
+        assert_eq!(it.id, "zlib:ejqnwjvqz7");
+        assert_eq!(it.category, "books");
+        assert_eq!(it.magnet, "https://z-library.im/dl/pvd1DNpn9X");
+        assert_eq!(it.title, "The Complete Harry Potter");
+        assert_eq!(it.year, Some(1800));
+        assert!(it.size_bytes > 0);
+        assert!(it.description.as_deref().unwrap_or("").contains("PDF"));
+        assert!(it.poster.as_deref().unwrap_or("").contains("covers100"));
+    }
+
+    #[test]
+    fn extracts_and_solves_zlib_cookie_seed() {
+        let seed = zlib_extract_challenge_seed(CHALLENGE).expect("seed parsed");
+        assert_eq!(seed, "561F94EF40EF56D9505271292065B950A74EC22F");
+        let token = zlib_solve_challenge_token(&seed).expect("token solved");
+        assert!(token.starts_with(&seed));
+        assert!(token.len() > seed.len());
+    }
 }
 
 #[cfg(test)]

@@ -5,7 +5,7 @@ import { SETTINGS_TABS, type SettingsTab } from "../lib/settingsTabs";
 import { arrowDownUp, history, tag, trendingUp } from "../lib/icons";
 
 // NavId is a superset of the content sections; this narrows it.
-const MEDIA: NavId[] = ["movies", "tvshows", "music"];
+const MEDIA: NavId[] = ["movies", "tvshows", "music", "books", "games"];
 function isMedia(s: NavId): s is MediaSectionId {
   return (MEDIA as string[]).includes(s);
 }
@@ -140,7 +140,7 @@ function DiscoverFilters({ recents, popular, onPick, onClearRecents }: SidebarPr
 }
 
 const MANAGE_COPY: Record<string, { title: string; hint: string }> = {
-  library: { title: "Library", hint: "Everything you've downloaded, on disk — play it back anytime, grouped by movies, shows and music." },
+  library: { title: "Library", hint: "Everything you've downloaded, on disk — open it anytime, grouped by movies, shows, music, books, and games." },
   downloads: { title: "Downloads", hint: "Active transfers and finished files. Click a download to open or reveal it." },
   export: { title: "Export", hint: "Copy finished media into your Plex / Apple Music library or a folder, named correctly." },
   sources: { title: "Sources", hint: "The sites magnets are indexed from. Add, refresh, or verify them on the right." },

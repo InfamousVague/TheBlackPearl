@@ -52,6 +52,7 @@ export { folderOutput } from "@mattmattmattmatt/base/primitives/icon/icons/folde
 export { hardDriveUpload } from "@mattmattmattmatt/base/primitives/icon/icons/hard-drive-upload";
 export { server } from "@mattmattmattmatt/base/primitives/icon/icons/server";
 export { folder } from "@mattmattmattmatt/base/primitives/icon/icons/folder";
+export { book } from "@mattmattmattmatt/base/primitives/icon/icons/book";
 export { circleCheck } from "@mattmattmattmatt/base/primitives/icon/icons/circle-check";
 export { circleAlert } from "@mattmattmattmatt/base/primitives/icon/icons/circle-alert";
 export { captions } from "@mattmattmattmatt/base/primitives/icon/icons/captions";

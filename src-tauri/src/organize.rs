@@ -31,7 +31,7 @@ pub struct OrganizeMove {
     pub from_name: String,
     /// Destination path relative to the library root.
     pub to_rel: String,
-    pub media_type: String, // movie | show | music
+    pub media_type: String, // movie | show | music | book | game
     /// "plan" | "moved" | "skipped" | "unchanged" | "error"
     pub status: String,
     pub message: Option<String>,
@@ -129,10 +129,22 @@ pub async fn run(
         let from = PathBuf::from(&f.path);
 
         // Music gets Artist/Album folders (parsed by the music-aware model + embedded
-        // tags); video gets the show/movie title logic.
+        // tags); books/games go to Books/Games, and video gets the show/movie title logic.
         let (mut to_rel, media): (String, String) = if f.kind == "audio" {
             let (tags, _ai) = metadata::music_tags_for(&from, client, model).await;
             (build_music_rel(&tags, &ext, organized_root), "music".to_string())
+        } else if f.kind == "book" {
+            let title = export::sanitize(&f.title);
+            (
+                build_rel(&title, None, f, &ext, "book"),
+                "book".to_string(),
+            )
+        } else if f.kind == "game" {
+            let title = export::sanitize(&f.title);
+            (
+                build_rel(&title, None, f, &ext, "game"),
+                "game".to_string(),
+            )
         } else {
             let stem = f.file_name.strip_suffix(&format!(".{ext}")).unwrap_or(&f.file_name);
             // LLM parse the name; fall back to the regex fields from the scan.
@@ -203,11 +215,13 @@ pub async fn run(
 // ---- naming ----
 
 /// Plex-convention destination relative to the organized root, from an ALREADY-canonical
-/// title plus the parsed season/episode/year. `media` is "music" | "show" | "movie".
+/// title plus the parsed season/episode/year. `media` is "music" | "show" | "movie" | "book" | "game".
 fn build_rel(title: &str, p: Option<&ai::Parsed>, f: &Exportable, ext: &str, media: &str) -> String {
     let title = if title.is_empty() { "Unknown" } else { title };
     match media {
         "music" => format!("Music/{title}.{ext}"),
+        "book" => format!("Books/{title}/{title}.{ext}"),
+        "game" => format!("Games/{title}/{title}.{ext}"),
         "show" => {
             let ss = p.and_then(|p| p.season).or(f.season).unwrap_or(1);
             let ee = p.and_then(|p| p.episode).or(f.episode).unwrap_or(1);
@@ -460,6 +474,12 @@ fn collect_files(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
 fn media_type_of(p: Option<&ai::Parsed>, f: &Exportable) -> String {
     if f.kind == "audio" {
         return "music".into();
+    }
+    if f.kind == "book" {
+        return "book".into();
+    }
+    if f.kind == "game" {
+        return "game".into();
     }
     let season = p.and_then(|p| p.season).or(f.season);
     let episode = p.and_then(|p| p.episode).or(f.episode);

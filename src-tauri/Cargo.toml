@@ -46,6 +46,7 @@ base64 = "0.22"
 flate2 = "1"
 rand = "0.8"
 sha2 = "0.10"
+sha1 = "0.10"
 regex = "1"
 roxmltree = "0.20"
 # Filesystem watcher (FSEvents on macOS) — auto-refreshes the library when files

@@ -282,6 +282,7 @@ export function Player({ item, streamUrl, stats, info, onBack, onPlayEpisode, on
   // --- custom player state ---
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const ambientRef = useRef<HTMLCanvasElement | null>(null);
   const [paused, setPaused] = useState(true);
   const [buffering, setBuffering] = useState(true);
   const [errored, setErrored] = useState(false);
@@ -443,6 +444,33 @@ export function Player({ item, streamUrl, stats, info, onBack, onPlayEpisode, on
     };
   }, []);
 
+  // Ambient "light bleed" (YouTube-style): sample the current frame into a tiny canvas
+  // ~10×/sec; CSS scales it up + heavily blurs it behind the player, so the frame's colors
+  // glow outward past the video edges. Skipped while paused or fullscreen.
+  useEffect(() => {
+    const cv = ambientRef.current;
+    const v = videoRef.current;
+    if (!cv || !v || isAudio || isFs) return;
+    cv.width = 32;
+    cv.height = 18;
+    const cx = cv.getContext("2d");
+    if (!cx) return;
+    let raf = 0;
+    let last = 0;
+    const draw = (t: number) => {
+      raf = requestAnimationFrame(draw);
+      if (v.paused || v.readyState < 2 || t - last < 100) return;
+      last = t;
+      try {
+        cx.drawImage(v, 0, 0, cv.width, cv.height);
+      } catch {
+        /* frame not ready yet */
+      }
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, [isAudio, isFs, src]);
+
   // Auto-hide the chrome while playing; always show when paused/buffering.
   const showChrome = useCallback(() => {
     setChromeShown(true);
@@ -510,6 +538,8 @@ export function Player({ item, streamUrl, stats, info, onBack, onPlayEpisode, on
 
   return (
     <div className={`player yt${hasShow || hasAnime ? " has-show" : ""}`}>
+      <div className="yt-stagewrap">
+      <canvas ref={ambientRef} className="yt-ambient" aria-hidden />
       <div
         ref={stageRef}
         className={`yt-stage${chromeVisible ? " chrome" : " hide-cursor"}${isFs ? " is-fs" : ""}`}
@@ -685,6 +715,7 @@ export function Player({ item, streamUrl, stats, info, onBack, onPlayEpisode, on
             <button className="yt-iconbtn yt-connecting-back" aria-label="Back" onClick={onBack}><Icon icon={chevronLeft} size="base" /></button>
           </div>
         )}
+      </div>
       </div>
 
       {/* Below the video (YouTube watch-page style): title, meta + episodes. */}

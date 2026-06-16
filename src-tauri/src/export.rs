@@ -14,6 +14,13 @@ pub const VIDEO_EXT: &[&str] = &[
 pub const AUDIO_EXT: &[&str] = &[
     "mp3", "flac", "m4a", "aac", "wav", "aiff", "aif", "alac", "ogg", "opus", "wma",
 ];
+pub const BOOK_EXT: &[&str] = &[
+    "epub", "pdf", "mobi", "azw3", "fb2", "djvu", "cbz", "cbr",
+];
+pub const GAME_EXT: &[&str] = &[
+    "nsp", "xci", "3ds", "cia", "nds", "gba", "gbc", "gb", "nes", "sfc", "smc",
+    "n64", "z64", "vpk", "wad", "xex", "cso", "pbp", "rom", "iso",
+];
 /// Containers Apple Music imports directly; anything else is transcoded to ALAC.
 const APPLE_MUSIC_OK: &[&str] = &["mp3", "m4a", "aac", "wav", "aiff", "aif", "alac"];
 pub const SUBTITLE_EXT: &[&str] = &["srt", "ass", "ssa", "vtt", "sub", "idx"];
@@ -85,8 +92,8 @@ pub struct Exportable {
     pub path: String,
     pub file_name: String,
     pub size_bytes: u64,
-    pub kind: String,       // "video" | "audio"
-    pub media_type: String, // "movie" | "show" | "music"
+    pub kind: String,       // "video" | "audio" | "book" | "game"
+    pub media_type: String, // "movie" | "show" | "music" | "book" | "game"
     pub title: String,
     pub year: Option<i64>,
     pub season: Option<i64>,
@@ -124,6 +131,10 @@ fn kind_of(ext: &str) -> Option<&'static str> {
         Some("video")
     } else if AUDIO_EXT.contains(&ext) {
         Some("audio")
+    } else if BOOK_EXT.contains(&ext) {
+        Some("book")
+    } else if GAME_EXT.contains(&ext) {
+        Some("game")
     } else {
         None
     }
@@ -181,6 +192,10 @@ fn parse_name(stem: &str) -> Parsed {
 fn media_type(kind: &str, p: &Parsed) -> &'static str {
     if kind == "audio" {
         "music"
+    } else if kind == "book" {
+        "book"
+    } else if kind == "game" {
+        "game"
     } else if p.is_show {
         "show"
     } else {
@@ -194,6 +209,10 @@ fn rel_path(p: &Parsed, kind: &str, ext: &str) -> String {
     let t = if t.is_empty() { "Unknown".to_string() } else { t };
     if kind == "audio" {
         format!("Music/{t}/{t}.{ext}")
+    } else if kind == "book" {
+        format!("Books/{t}/{t}.{ext}")
+    } else if kind == "game" {
+        format!("Games/{t}/{t}.{ext}")
     } else if p.is_show {
         let ss = p.season.unwrap_or(1);
         let ee = p.episode.unwrap_or(1);
