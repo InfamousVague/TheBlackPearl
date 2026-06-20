@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+dist-web/
+src-tauri/target/
+# Tauri-generated (schemas + per-platform mobile projects) — regenerated on build.
+src-tauri/gen/
+.vite/
+
+# Local agent/editor config
+.claude/
+
+# Credentials — NEVER commit. .env.apple holds the Apple app-specific
+# password used for notarization; .env.apple.example (placeholders) is kept.
+.env
+.env.apple
+.env.*.local
+
+# Bundles / installers
+*.dmg
+*.pkg
+
+# Bundled ffmpeg/ffprobe sidecar binaries (~50MB each) — provisioned by
+# scripts/fetch-ffmpeg.sh, not committed. GPL static builds; see FFMPEG-NOTICE.md.
+src-tauri/binaries/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Logs
+*.log
+npm-debug.log*
+
+# Kept on purpose: package-lock.json, src-tauri/Cargo.lock, all source,
+# tauri config, icons, Entitlements.plist, Makefile, .env.apple.example

@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh GhostWire seeder with the latest release torrents
+After=ghostwire-seeder.service
+Requires=ghostwire-seeder.service
+
+[Service]
+Type=oneshot
+User=gwseed
+Group=gwseed
+Environment=SEED_DIR=/var/lib/ghostwire-seeder/data
+Environment=RQBIT_API=http://127.0.0.1:3030
+ExecStart=/usr/local/bin/ghostwire-seed-release

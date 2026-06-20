@@ -1,0 +1,23 @@
+[Unit]
+Description=GhostWire bootstrap seeder (rqbit)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gwseed
+Group=gwseed
+# Persistent rqbit session: seeds everything added to it (by ghostwire-seed-refresh).
+# --disable-upnp is optional; open 4240 on the firewall instead. HTTP API on 127.0.0.1:3030.
+ExecStart=/usr/local/bin/rqbit --http-api-listen-addr 127.0.0.1:3030 server start /var/lib/ghostwire-seeder/data
+Restart=on-failure
+RestartSec=10
+# Hardening — this process only ever holds GhostWire's own signed release bundles.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/ghostwire-seeder
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

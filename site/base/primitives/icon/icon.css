@@ -1,0 +1,33 @@
+/* Icon primitive — SVG icon with size / color / weight / draw-in support */
+
+/* ---- Base ---- */
+.icon {
+  display: inline-block;
+  flex-shrink: 0;
+  vertical-align: middle;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: currentColor;
+}
+
+/* ---- Sizes (mapped to type scale) ---- */
+.icon--xs   { width: var(--text-xs-size);   height: var(--text-xs-size); }
+.icon--sm   { width: var(--text-sm-size);   height: var(--text-sm-size); }
+.icon--base { width: var(--text-base-size); height: var(--text-base-size); }
+.icon--lg   { width: var(--text-lg-size);   height: var(--text-lg-size); }
+.icon--xl   { width: var(--text-xl-size);   height: var(--text-xl-size); }
+.icon--2xl  { width: var(--text-2xl-size);  height: var(--text-2xl-size); }
+
+/* ---- Colors ---- */
+.icon--primary     { color: var(--color-text-primary); }
+.icon--secondary   { color: var(--color-text-secondary); }
+.icon--tertiary    { color: var(--color-text-tertiary); }
+.icon--disabled    { color: var(--color-text-disabled); }
+
+/* ---- Draw-in animation ---- */
+
+/* Hide the icon until JS measures paths and starts the animation */
+.icon--draw { visibility: hidden; }
+.icon--drawing { visibility: visible; }

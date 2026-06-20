@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "splashscreen",
+  "description": "Pre-launch updater/splash window: check for updates, then reveal the main window and close itself.",
+  "platforms": ["macOS"],
+  "windows": ["splashscreen"],
+  "permissions": [
+    "core:default",
+    "updater:default",
+    "process:default",
+    "process:allow-restart",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:window:allow-close"
+  ]
+}

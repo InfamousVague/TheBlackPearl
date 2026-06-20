@@ -1,0 +1,20 @@
+{
+  "generatedAt": "2026-06-18T00:00:00.000Z",
+  "builds": [
+    {
+      "id": "mac-arm64",
+      "label": "macOS Apple Silicon (.dmg)",
+      "href": "/downloads/GhostWire-macOS-AppleSilicon.dmg"
+    },
+    {
+      "id": "windows-x64",
+      "label": "Windows x64 (.exe)",
+      "href": "/downloads/GhostWire-Windows-x64.exe"
+    },
+    {
+      "id": "linux-x64",
+      "label": "Linux x86_64 (.AppImage)",
+      "href": "/downloads/GhostWire-Linux-x86_64.AppImage"
+    }
+  ]
+}

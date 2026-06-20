@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>GhostWire — free torrent streaming for desktop</title>
+    <meta
+      name="description"
+      content="GhostWire is a free desktop app that searches your sources, streams torrents while they download, and builds a tidy library with automatic box art — no account, no API keys."
+    />
+    <link rel="icon" type="image/png" href="./assets/ghost-icon.png" />
+    <link rel="stylesheet" href="./base/site/styles/base.css" />
+    <link rel="stylesheet" href="./base/primitives/button/button.css" />
+    <link rel="stylesheet" href="./base/primitives/card/card.css" />
+    <link rel="stylesheet" href="./base/primitives/icon/icon.css" />
+    <link rel="stylesheet" href="./base/primitives/select/select.css" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./app.js" defer></script>
+  </head>
+  <body>
+    <!-- Top navigation -->
+    <header class="nav" aria-label="Primary">
+      <a class="nav-brand" href="#top">
+        <img src="./assets/ghost-icon.png" alt="" class="nav-logo" />
+        <span>GhostWire</span>
+      </a>
+      <nav class="nav-links" aria-label="Sections">
+        <a href="#features">Features</a>
+        <a href="#screens">Screenshots</a>
+        <a href="#how">How it works</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <a href="#download" class="btn btn--sm btn--primary nav-cta">Download</a>
+    </header>
+
+    <main id="top" class="page">
+      <!-- Hero -->
+      <section class="hero" id="download" aria-label="GhostWire">
+        <div class="hero-copy">
+          <span class="eyebrow">Free desktop torrent streaming</span>
+          <h1>Stream anything,<br />wait for nothing.</h1>
+          <p class="lede">
+            GhostWire is a free torrent streaming app that lets you watch while files download —
+            one search across every source you configure, a clean desktop app, and a library that
+            organizes itself.
+          </p>
+
+          <div class="download-actions" id="downloads" aria-label="Downloads">
+            <div class="download-split" id="download-split">
+              <a
+                id="primary-download"
+                class="btn btn--lg btn--primary hero-download-btn hero-download-main"
+                href="/downloads/GhostWire-macOS-AppleSilicon.dmg"
+                download
+              >
+                Download GhostWire
+              </a>
+              <button
+                id="other-versions-toggle"
+                type="button"
+                class="btn btn--lg btn--primary hero-download-chevron"
+                aria-label="Other versions"
+                aria-haspopup="menu"
+                aria-expanded="false"
+              >
+                <span aria-hidden="true">▾</span>
+              </button>
+            </div>
+            <div id="other-versions-menu" class="download-menu" role="menu" hidden></div>
+          </div>
+          <p class="hero-meta">
+            <span id="detected-version" class="detected-version" aria-live="polite"></span>
+            <span class="hero-meta-static">Free · No account · macOS, Windows &amp; Linux</span>
+          </p>
+        </div>
+
+        <div class="hero-art" aria-hidden="true">
+          <div class="hero-glow"></div>
+          <img class="ghost" src="./assets/ghost-hero.png" alt="" />
+        </div>
+      </section>
+
+      <!-- Trust strip -->
+      <section class="strip" aria-label="At a glance">
+        <div class="strip-item"><strong>One search</strong><span>every source at once</span></div>
+        <div class="strip-item"><strong>Instant play</strong><span>stream as it downloads</span></div>
+        <div class="strip-item"><strong>No account</strong><span>no keys, no sign-in</span></div>
+        <div class="strip-item"><strong>3 platforms</strong><span>macOS · Windows · Linux</span></div>
+      </section>
+
+      <!-- Features -->
+      <section class="features" id="features" aria-label="Features">
+        <header class="section-head">
+          <span class="eyebrow">What it does</span>
+          <h2>Everything you watch and listen to, in one place.</h2>
+          <p>From the first search to a fully organized library — without the busywork.</p>
+        </header>
+
+        <div class="feature-grid">
+          <article class="feature card card--outlined card--padding-lg">
+            <span class="feature-icon" aria-hidden="true"><img src="./assets/ghost-lantern.png" alt="" loading="lazy" /></span>
+            <h3>Search every source at once</h3>
+            <p>
+              Point GhostWire at the sources you want, then search them all from one bar. Results are
+              ranked by seeders, size, and quality, so the best match is always first.
+            </p>
+          </article>
+
+          <article class="feature card card--outlined card--padding-lg">
+            <span class="feature-icon" aria-hidden="true"><img src="./assets/ghost-film.png" alt="" loading="lazy" /></span>
+            <h3>Stream while it downloads</h3>
+            <p>
+              Press play and start watching in seconds — no waiting for the full file. Formats a
+              browser can't decode are transcoded on the fly, with smooth seeking throughout.
+            </p>
+          </article>
+
+          <article class="feature card card--outlined card--padding-lg">
+            <span class="feature-icon" aria-hidden="true"><img src="./assets/ghost-chest.png" alt="" loading="lazy" /></span>
+            <h3>A library that organizes itself</h3>
+            <p>
+              Finished downloads land in a clean, browsable library — movies, TV, anime, and music
+              sorted automatically and ready to play again any time.
+            </p>
+          </article>
+
+          <article class="feature card card--outlined card--padding-lg">
+            <span class="feature-icon" aria-hidden="true"><img src="./assets/ghost-tv.png" alt="" loading="lazy" /></span>
+            <h3>Box art for everything</h3>
+            <p>
+              Posters and covers for movies, TV, anime, games, and albums are fetched and cached for
+              you automatically — a tidy, poster-perfect grid with zero setup.
+            </p>
+          </article>
+
+          <article class="feature card card--outlined card--padding-lg">
+            <span class="feature-icon" aria-hidden="true">🛡️</span>
+            <h3>Keyless and private</h3>
+            <p>
+              No account, no sign-in, no API keys to paste. GhostWire runs on your machine and only
+              ever touches the sources you choose to add.
+            </p>
+          </article>
+
+          <article class="feature card card--outlined card--padding-lg">
+            <span class="feature-icon" aria-hidden="true"><img src="./assets/ghost-ship.png" alt="" loading="lazy" /></span>
+            <h3>Native on every desktop</h3>
+            <p>
+              Real builds for macOS (Apple Silicon &amp; Intel), Windows, and Linux — lightweight,
+              fast, and kept current by a built-in auto-updater.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <!-- Screenshots -->
+      <section class="screens" id="screens" aria-label="Desktop screenshots">
+        <header class="section-head">
+          <span class="eyebrow">A closer look</span>
+          <h2>Built to feel like the streaming apps you already love.</h2>
+        </header>
+
+        <div class="carousel" id="screens-carousel">
+          <button
+            type="button"
+            class="btn btn--secondary carousel-control carousel-control--prev"
+            aria-label="Previous screenshot"
+          >
+            <svg class="icon icon--xl carousel-control-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m15 18-6-6 6-6"></path>
+            </svg>
+          </button>
+
+          <div class="carousel-viewport">
+            <div class="carousel-track">
+              <figure class="carousel-slide is-active"><img src="./assets/1.png" alt="GhostWire Discover — browse and search every source at once" loading="lazy" /></figure>
+              <figure class="carousel-slide"><img src="./assets/2.png" alt="GhostWire Downloads — stream titles while they download" loading="lazy" /></figure>
+              <figure class="carousel-slide"><img src="./assets/3.png" alt="GhostWire Library — every download organized by type" loading="lazy" /></figure>
+              <figure class="carousel-slide"><img src="./assets/4.png" alt="GhostWire Music — your local music library and player" loading="lazy" /></figure>
+              <figure class="carousel-slide"><img src="./assets/5.png" alt="GhostWire Movies library" loading="lazy" /></figure>
+              <figure class="carousel-slide"><img src="./assets/6.png" alt="GhostWire TV Shows library" loading="lazy" /></figure>
+              <figure class="carousel-slide"><img src="./assets/7.png" alt="GhostWire Anime library" loading="lazy" /></figure>
+              <figure class="carousel-slide"><img src="./assets/8.png" alt="GhostWire Books library" loading="lazy" /></figure>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            class="btn btn--secondary carousel-control carousel-control--next"
+            aria-label="Next screenshot"
+          >
+            <svg class="icon icon--xl carousel-control-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m9 18 6-6-6-6"></path>
+            </svg>
+          </button>
+        </div>
+
+        <div class="carousel-dots" id="carousel-dots" aria-label="Screenshot positions"></div>
+      </section>
+
+      <!-- How it works -->
+      <section class="how" id="how" aria-label="How it works">
+        <header class="section-head">
+          <span class="eyebrow">How it works</span>
+          <h2>Three steps from install to playing.</h2>
+        </header>
+        <ol class="steps">
+          <li class="step card card--outlined card--padding-lg">
+            <span class="step-num">1</span>
+            <h3>Install &amp; add your sources</h3>
+            <p>Download for your OS and point GhostWire at the sources you want to search.</p>
+          </li>
+          <li class="step card card--outlined card--padding-lg">
+            <span class="step-num">2</span>
+            <h3>Search &amp; press play</h3>
+            <p>Find what you want across every source, then stream it the moment you hit play.</p>
+          </li>
+          <li class="step card card--outlined card--padding-lg">
+            <span class="step-num">3</span>
+            <h3>Build your library</h3>
+            <p>Everything you keep is sorted into a tidy, poster-rich library you can revisit any time.</p>
+          </li>
+        </ol>
+      </section>
+
+      <!-- FAQ -->
+      <section class="faq" id="faq" aria-label="Frequently asked questions">
+        <header class="section-head">
+          <span class="eyebrow">Questions</span>
+          <h2>Good to know.</h2>
+        </header>
+        <div class="faq-list">
+          <details class="faq-item">
+            <summary>Is GhostWire free?</summary>
+            <p>Yes — GhostWire is free to download and use, with no account and no sign-in.</p>
+          </details>
+          <details class="faq-item">
+            <summary>Does GhostWire host or provide any content?</summary>
+            <p>
+              No. GhostWire hosts, stores, and indexes no media of its own. Every result comes from
+              third-party sources that you choose to configure — you decide what it searches.
+            </p>
+          </details>
+          <details class="faq-item">
+            <summary>Do I need API keys for posters and metadata?</summary>
+            <p>
+              No. Artwork and metadata work out of the box — covers are fetched and cached for you.
+              Advanced users can still plug in their own keys if they prefer.
+            </p>
+          </details>
+          <details class="faq-item">
+            <summary>Which platforms are supported?</summary>
+            <p>macOS (Apple Silicon &amp; Intel), Windows, and Linux, with native desktop builds for each.</p>
+          </details>
+          <details class="faq-item">
+            <summary>How do updates work?</summary>
+            <p>GhostWire ships with a built-in auto-updater, so you stay on the latest version automatically.</p>
+          </details>
+        </div>
+      </section>
+
+      <!-- P2P distribution: magnets for the current release -->
+      <section class="seed" id="seed" aria-label="Help seed GhostWire">
+        <h2>Help seed GhostWire</h2>
+        <p class="seed-lede">
+          GhostWire distributes its own builds over BitTorrent. Grab the latest release as a magnet and
+          seed it to help others download faster — or just turn on “Download updates over BitTorrent” in
+          the app. Every build is verified against the same signature before it installs.
+        </p>
+        <div id="seed-magnets" class="seed-magnets" aria-live="polite">
+          <p class="seed-empty">Loading the latest release…</p>
+        </div>
+      </section>
+
+      <!-- Closing download CTA -->
+      <section class="cta card card--padding-lg" aria-label="Download GhostWire">
+        <div class="cta-inner">
+          <h2>Ready to stream?</h2>
+          <p>Free, no account, and ready in seconds on macOS, Windows, and Linux.</p>
+          <a href="#download" class="btn btn--lg btn--primary cta-btn">Download GhostWire</a>
+        </div>
+      </section>
+
+      <!-- Terms & Disclaimer -->
+      <section class="disclaimer" id="terms" aria-label="Terms and disclaimer">
+        <h2>Terms &amp; Disclaimer</h2>
+        <p>
+          GhostWire is a general-purpose search, streaming, and library tool. It hosts, stores, and
+          indexes no media of its own — every result comes from third-party sources that you choose to
+          configure. You are solely responsible for the material you search for, download, stream, or
+          share, and for ensuring it is lawful in your jurisdiction. Use only legal, authorized, or
+          public-domain sources; do not use this software to infringe copyright or any other rights.
+        </p>
+        <p>
+          The software is provided "as is" and "as available," without warranties of any kind. By
+          downloading, installing, or using GhostWire you agree that you are solely responsible for how
+          you use it, including compliance with all applicable laws, regulations, and third-party rights.
+          To the maximum extent permitted by law, you waive and release any claims against the authors,
+          contributors, and distributors, who accept no liability for how the software is used, for any
+          third-party content accessed through it, or for any direct, indirect, incidental, special,
+          consequential, or punitive damages arising from or related to its use, misuse, or inability to
+          use it. This notice is not legal advice.
+        </p>
+        <p>Screenshots use mock data and may not be representative of content actually available.</p>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        <a class="nav-brand" href="#top">
+          <img src="./assets/ghost-icon.png" alt="" class="nav-logo" />
+          <span>GhostWire</span>
+        </a>
+        <nav class="footer-links" aria-label="Footer">
+          <a href="#features">Features</a>
+          <a href="#screens">Screenshots</a>
+          <a href="#faq">FAQ</a>
+          <a href="#terms">Terms</a>
+        </nav>
+      </div>
+      <p class="footer-fine">© <span id="year"></span> GhostWire. Free desktop torrent streaming.</p>
+    </footer>
+
+    <script>
+      // Tiny inline touch: current year in the footer (no build step needed).
+      document.getElementById("year").textContent = new Date().getFullYear();
+    </script>
+  </body>
+</html>

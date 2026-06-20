@@ -1,0 +1,50 @@
+/* In-progress download card — progress ring over dimmed cover art. Co-located so it
+   doesn't touch the shared app.css. Reuses .poster-card / .poster from the grid. */
+.dl-card { cursor: default; }
+.dl-card .poster { transform: none; }
+
+.dl-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* semi-opaque scrim dims the cover art behind the ring */
+  background: rgba(0, 0, 0, 0.55);
+  -webkit-backdrop-filter: blur(1px);
+  backdrop-filter: blur(1px);
+}
+.dl-ring-wrap {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+}
+.dl-ring {
+  position: absolute;
+  inset: 0;
+  width: 58px;
+  height: 58px;
+  transform: rotate(-90deg);
+}
+.dl-ring-bg {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.22);
+  stroke-width: 3;
+}
+.dl-ring-fill {
+  fill: none;
+  stroke: var(--gg-accent);
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.45s ease;
+}
+.dl-pct {
+  position: relative;
+  font-size: var(--text-sm-size);
+  font-weight: 700;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}

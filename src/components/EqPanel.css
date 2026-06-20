@@ -1,0 +1,146 @@
+/* Spotify-style equalizer panel (used as a popover inside the now-playing hero). */
+.eqp {
+  width: min(440px, 92vw);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--gg-chrome-strong);
+  border: 1px solid var(--color-glass-border);
+  box-shadow:
+    inset 0 1px 0 var(--gg-glass-rim),
+    0 24px 60px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(var(--gg-chrome-blur)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--gg-chrome-blur)) saturate(160%);
+  color: #f3f4f8;
+}
+
+.eqp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.eqp-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.eqp-inactive {
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.14);
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+.eqp-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.eqp-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  cursor: pointer;
+}
+.eqp-close:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.eqp-presets {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+.eqp-presets::-webkit-scrollbar {
+  display: none;
+}
+/* Keep preset pills on a single line. */
+.eqp-presets .chip {
+  white-space: nowrap;
+}
+/* Hovering the active preset must not override its selected (ghost-white) styling. */
+.eqp-presets .chip--selected:hover {
+  background: var(--gg-btn-white);
+  color: var(--color-bg-primary);
+  border-color: var(--gg-btn-white);
+}
+
+.eqp-curve {
+  width: 100%;
+  height: 96px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.eqp-bands {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 6px;
+  align-items: end;
+}
+.eqp-bands.disabled {
+  opacity: 0.5;
+}
+.eqp-band {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.eqp-gain {
+  font-size: 0.62rem;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.7);
+  min-height: 0.9em;
+}
+.eqp-freq {
+  font-size: 0.6rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* Vertical range slider (WebKit / WKWebView). */
+.eqp-slider {
+  -webkit-appearance: slider-vertical;
+  appearance: slider-vertical;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 22px;
+  height: 132px;
+  background: transparent;
+  cursor: pointer;
+}
+.eqp-slider:disabled {
+  cursor: default;
+}
+.eqp-slider::-webkit-slider-runnable-track {
+  width: 5px;
+  border-radius: 999px;
+  background: linear-gradient(to top, rgba(255, 255, 255, 0.25), var(--gg-seafoam));
+}
+.eqp-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  margin-left: -6px;
+}

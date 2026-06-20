@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 920,
+        "minHeight": 600,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 18, "y": 23 },
+        "backgroundColor": "#09090B",
+        "visible": false
+      },
+      {
+        "label": "splashscreen",
+        "url": "index.html#/updater",
+        "title": "GhostWire",
+        "width": 300,
+        "height": 300,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "center": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": true,
+        "alwaysOnTop": true
+      }
+    ]
+  },
+  "bundle": {
+    "externalBin": ["binaries/ffmpeg", "binaries/ffprobe"]
+  }
+}

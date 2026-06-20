@@ -1,0 +1,105 @@
+/* Emulators card shown at the top of the Games section. */
+.emu-card {
+  margin-bottom: 18px;
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--gg-border-strong);
+  background: var(--gg-surface);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 12px 28px rgba(0, 0, 0, 0.35);
+}
+
+.emu-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.emu-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-lg-size);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.emu-sub {
+  font-size: var(--text-sm-size);
+  color: var(--gg-text-dim);
+}
+
+.emu-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.emu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--gg-border);
+  background: var(--gg-surface-2);
+  color: var(--gg-text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
+}
+.emu-item:hover {
+  background: var(--gg-accent-soft);
+  border-color: var(--gg-accent);
+  transform: translateY(-1px);
+}
+
+.emu-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--gg-accent-soft);
+  color: var(--gg-accent);
+  overflow: hidden;
+}
+.emu-item-logo {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+
+.emu-item-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.emu-item-name {
+  font-size: var(--text-sm-size);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.emu-item-system {
+  font-size: var(--text-xs-size);
+  color: var(--gg-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.emu-item-ext {
+  flex-shrink: 0;
+  color: var(--gg-text-dim);
+}
+.emu-item:hover .emu-item-ext {
+  color: var(--gg-accent);
+}

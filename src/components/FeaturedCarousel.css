@@ -1,0 +1,154 @@
+/* Featured carousel on the Discover home — a horizontal rail of gradient
+   "feature cards" (per-title hue gradient + poster + meta), multiple in view. */
+.featured {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.fc-viewport {
+  position: relative;
+  isolation: isolate;
+}
+
+.fc-track {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  padding: 2px;
+  margin: -2px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.fc-track::-webkit-scrollbar { display: none; }
+
+/* Each featured title is a self-contained gradient hero card. ~2 + a peek show on a
+   typical content width, so it reads clearly as a carousel of multiple features. */
+.fc-card {
+  flex: 0 0 clamp(340px, 47%, 560px);
+  scroll-snap-align: start;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  min-height: 236px;
+  padding: 24px 26px;
+  border: 1px solid var(--gg-border-strong);
+  border-radius: var(--radius-lg);
+}
+/* Sheen + bottom vignette over the gradient for depth. */
+.fc-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 80% at 88% 110%, rgba(0, 0, 0, 0.45), transparent 60%),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.34) 0%, rgba(0, 0, 0, 0) 55%);
+}
+
+.fc-card-poster {
+  flex: 0 0 auto;
+  width: 120px;
+  aspect-ratio: 2 / 3;
+  border-radius: 12px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(0, 0, 0, 0.28);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+.fc-card-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.fc-card-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  color: #fff;
+}
+.fc-card-title {
+  margin: 5px 0 9px;
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: #fff;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.fc-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: rgba(255, 255, 255, 0.85);
+}
+.fc-card-meta-text { font-size: 12.5px; }
+.fc-card-overview {
+  margin: 9px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.82);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.fc-card-actions {
+  margin-top: auto;
+  padding-top: 14px;
+  display: flex;
+  gap: 8px;
+}
+
+/* Prev/next arrows — round, floating over the rail edges. */
+.featured-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--gg-border-strong);
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+.featured-arrow:hover { background: rgba(0, 0, 0, 0.75); }
+.featured-arrow.left { left: 8px; }
+.featured-arrow.right { right: 8px; }
+
+.featured-dots {
+  display: flex;
+  justify-content: center;
+  gap: 7px;
+}
+.featured-dot {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--gg-surface-2);
+  cursor: pointer;
+  transition: background 0.15s ease, width 0.15s ease;
+}
+.featured-dot.active { width: 20px; background: var(--gg-text-muted); }

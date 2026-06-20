@@ -1,0 +1,186 @@
+/* Create & share a torrent dialog — roomy, iconographic layout. */
+/* The Base Dialog renders children straight into the panel (no body wrapper), so the
+   content owns its own padding. Match the header inset and give it generous breathing room. */
+.crt-dialog.dialog { max-width: 480px; }
+.crt-dialog .dialog__header { padding: 22px 24px 0; }
+
+.crt {
+  box-sizing: border-box;
+  display: grid;
+  gap: 18px;
+  width: 100%;
+  padding: 16px 24px 24px;
+}
+
+/* Reassurance note. */
+.crt-note {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 13px;
+  border-radius: 12px;
+  background: var(--gg-glass);
+  border: 1px solid var(--gg-glass-brd);
+  box-shadow: inset 0 1px 0 var(--gg-glass-rim);
+  color: var(--gg-text-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.crt-note-ic { flex: none; margin-top: 1px; color: var(--gg-seafoam); display: inline-flex; }
+.crt-note code,
+.crt-hint code {
+  font-size: 11.5px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--gg-surface-2);
+}
+
+/* Source pickers — two large icon cards. */
+.crt-pickers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.crt-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 9px;
+  padding: 18px 12px;
+  border-radius: 14px;
+  border: 1px dashed var(--gg-glass-brd);
+  background: var(--gg-surface);
+  color: var(--gg-text);
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 0.14s ease, background 0.14s ease, transform 0.14s ease;
+}
+.crt-pick:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--gg-seafoam) 55%, transparent);
+  background: color-mix(in srgb, var(--gg-seafoam) 7%, var(--gg-surface));
+  transform: translateY(-1px);
+}
+.crt-pick:disabled { opacity: 0.5; cursor: default; }
+.crt-pick-ic {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--gg-seafoam) 14%, var(--gg-surface-2));
+  color: var(--gg-seafoam);
+}
+.crt-pick-label { font-weight: 600; font-size: 13px; }
+.crt-pick-sub { font-size: 11px; color: var(--gg-text-dim); }
+
+/* Selected source card. */
+.crt-source {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--gg-seafoam) 40%, transparent);
+  background: color-mix(in srgb, var(--gg-seafoam) 9%, var(--gg-surface));
+}
+.crt-source-ic {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--gg-seafoam) 20%, transparent);
+  color: var(--gg-seafoam);
+}
+.crt-source-meta { min-width: 0; flex: 1; }
+.crt-source-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--gg-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.crt-source-sub { font-size: 11.5px; color: var(--gg-text-dim); }
+.crt-source-clear {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--gg-text-dim);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.crt-source-clear:hover { background: var(--gg-surface-2); color: var(--gg-text); }
+
+/* Fields. */
+.crt-field { display: grid; gap: 6px; }
+.crt-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gg-text);
+}
+.crt-label svg { color: var(--gg-text-dim); }
+.crt-label-opt {
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--gg-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.crt-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 10px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--gg-border-strong);
+  background: var(--gg-surface);
+  color: var(--gg-text);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  outline: 0;
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+.crt-textarea:focus {
+  border-color: color-mix(in srgb, var(--gg-seafoam) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gg-seafoam) 18%, transparent);
+}
+.crt-textarea::placeholder { color: var(--gg-text-dim); }
+.crt-hint { font-size: 11.5px; color: var(--gg-text-dim); line-height: 1.45; }
+.crt-error { font-size: 12px; color: var(--gg-danger, #e5484d); margin: 0; }
+
+/* Success header (result state). */
+.crt-success {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 13px;
+  border-radius: 12px;
+  background: color-mix(in srgb, #4ade80 12%, var(--gg-surface));
+  border: 1px solid color-mix(in srgb, #4ade80 35%, transparent);
+  font-size: 12.5px;
+  color: var(--gg-text);
+}
+.crt-success-ic { flex: none; color: #4ade80; display: inline-flex; }
+
+/* Actions — separated from the form with a hairline so the buttons read as a footer. */
+.crt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 18px;
+  border-top: 1px solid var(--gg-border);
+}
+.crt-actions--split { justify-content: space-between; }

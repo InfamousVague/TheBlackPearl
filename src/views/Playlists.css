@@ -1,0 +1,330 @@
+/* Playlists view, restyled to match the Music landing language. */
+
+.pl-head-actions,
+.pl-new-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pl-new-row :global(.base-input),
+.pl-rename-row :global(.base-input) {
+  min-width: 220px;
+}
+
+.pl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(186px, 1fr));
+  gap: 18px;
+}
+
+.pl-poster-card {
+  border: none;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.pl-source-row {
+  margin-top: 1px;
+  color: var(--gg-text-dim);
+}
+
+.pl-rename-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pl-export {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.pl-format {
+  appearance: none;
+  background-color: var(--gg-chrome);
+  color: var(--gg-text);
+  border: 1px solid var(--gg-glass-brd);
+  border-radius: 8px;
+  padding: 0 28px 0 12px;
+  font-size: 13px;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(var(--gg-blur)) saturate(160%);
+  backdrop-filter: blur(var(--gg-blur)) saturate(160%);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+}
+
+/* Glass Export button so it matches the format dropdown + topbar chips. */
+.pl-export .btn--secondary {
+  background: var(--gg-chrome);
+  border-color: var(--gg-glass-brd);
+  -webkit-backdrop-filter: blur(var(--gg-blur)) saturate(160%);
+  backdrop-filter: blur(var(--gg-blur)) saturate(160%);
+}
+
+.pl-hint {
+  margin-top: 8px;
+}
+
+.pl-tracks {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--gg-glass-brd);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--gg-glass);
+  -webkit-backdrop-filter: blur(var(--gg-blur)) saturate(150%);
+  backdrop-filter: blur(var(--gg-blur)) saturate(150%);
+  box-shadow: inset 0 1px 0 var(--gg-glass-rim);
+}
+
+.pl-track {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--gg-border);
+  opacity: 0.6;
+  cursor: grab;
+}
+
+.pl-track.is-dragging {
+  opacity: 0.35;
+  cursor: grabbing;
+}
+
+/* Insertion indicator while reordering — a teal line above the hovered row. */
+.pl-track.is-over {
+  box-shadow: inset 0 2px 0 var(--gg-accent);
+}
+
+.pl-track:first-child {
+  border-top: none;
+}
+
+.pl-track.has-file {
+  opacity: 1;
+}
+
+.pl-track:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.pl-track-idx {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  cursor: default;
+  color: var(--gg-text-muted);
+  font-size: 12px;
+}
+
+.pl-track.has-file .pl-track-idx {
+  cursor: pointer;
+}
+
+/* Track number and the play glyph occupy the same cell; hovering a downloaded row
+   swaps the number out for the play triangle (Spotify-style). */
+.pl-num,
+.pl-play-glyph {
+  grid-area: 1 / 1;
+}
+
+.pl-play-glyph {
+  display: grid;
+  place-items: center;
+  color: var(--gg-accent);
+  opacity: 0;
+}
+
+.pl-track.has-file:hover .pl-track-idx .pl-num {
+  opacity: 0;
+}
+
+.pl-track.has-file:hover .pl-track-idx .pl-play-glyph {
+  opacity: 1;
+  color: var(--gg-text);
+}
+
+.pl-track-meta {
+  min-width: 0;
+}
+
+.pl-track-name {
+  font-size: 14px;
+  color: var(--gg-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pl-track-artist {
+  font-size: 12px;
+  color: var(--gg-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pl-track-dur {
+  font-size: 12px;
+  color: var(--gg-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pl-track-x {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  color: var(--gg-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.pl-track:hover .pl-track-x {
+  opacity: 1;
+}
+
+.pl-track-x:hover {
+  background: var(--gg-surface-2);
+  color: var(--gg-hot);
+}
+
+.pl-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  padding: 48px 16px;
+  color: var(--gg-text-dim);
+}
+
+.pl-empty > :global(svg) {
+  color: var(--gg-text-muted);
+  margin-bottom: 6px;
+}
+
+.pl-empty p {
+  margin: 0;
+}
+
+/* ----- rich detail page (Spotify-style hero) ----- */
+.pl-hero {
+  display: flex;
+  align-items: flex-end;
+  gap: 24px;
+  padding: 28px 24px;
+  border-radius: var(--radius-lg, 18px);
+  border: 1px solid var(--gg-glass-brd);
+  box-shadow: inset 0 1px 0 var(--gg-glass-rim), 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+
+.pl-hero-cover {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+}
+
+.pl-hero-cover img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.pl-hero-glyph {
+  opacity: 0.85;
+}
+
+.pl-hero-info {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding-bottom: 6px;
+}
+
+.pl-hero-kind {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.pl-hero-title {
+  margin: 0;
+  font-size: clamp(28px, 5vw, 52px);
+  line-height: 1.05;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #fff;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.pl-hero-title:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.pl-hero-rename {
+  margin: 4px 0;
+}
+
+.pl-hero-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.pl-hero-meta .dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.6;
+}
+
+.pl-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pl-actions-spacer {
+  flex: 1;
+}

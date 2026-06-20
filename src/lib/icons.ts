@@ -1,0 +1,99 @@
+// Central re-export of the Base UI icon SVG strings GhostWire uses.
+// Base ships each icon as a named export (camelCased from its filename).
+export { ghost } from "@mattmattmattmatt/base/primitives/icon/icons/ghost";
+export { grid2x2 } from "@mattmattmattmatt/base/primitives/icon/icons/grid-2x2";
+export { rss } from "@mattmattmattmatt/base/primitives/icon/icons/rss";
+export { folderDown } from "@mattmattmattmatt/base/primitives/icon/icons/folder-down";
+export { folderOpen } from "@mattmattmattmatt/base/primitives/icon/icons/folder-open";
+export { download } from "@mattmattmattmatt/base/primitives/icon/icons/download";
+export { upload } from "@mattmattmattmatt/base/primitives/icon/icons/upload";
+export { heart } from "@mattmattmattmatt/base/primitives/icon/icons/heart";
+export { airplay } from "@mattmattmattmatt/base/primitives/icon/icons/airplay";
+export { settings2 } from "@mattmattmattmatt/base/primitives/icon/icons/settings-2";
+export { search } from "@mattmattmattmatt/base/primitives/icon/icons/search";
+export { plus } from "@mattmattmattmatt/base/primitives/icon/icons/plus";
+export { arrowDownUp } from "@mattmattmattmatt/base/primitives/icon/icons/arrow-down-up";
+export { listFilter } from "@mattmattmattmatt/base/primitives/icon/icons/list-filter";
+export { flame } from "@mattmattmattmatt/base/primitives/icon/icons/flame";
+export { users } from "@mattmattmattmatt/base/primitives/icon/icons/users";
+export { hardDrive } from "@mattmattmattmatt/base/primitives/icon/icons/hard-drive";
+export { clock } from "@mattmattmattmatt/base/primitives/icon/icons/clock";
+export { circlePlay } from "@mattmattmattmatt/base/primitives/icon/icons/circle-play";
+export { play } from "@mattmattmattmatt/base/primitives/icon/icons/play";
+export { pause } from "@mattmattmattmatt/base/primitives/icon/icons/pause";
+export { globe } from "@mattmattmattmatt/base/primitives/icon/icons/globe";
+export { link2 } from "@mattmattmattmatt/base/primitives/icon/icons/link-2";
+export { rotateCw } from "@mattmattmattmatt/base/primitives/icon/icons/rotate-cw";
+export { slidersVertical } from "@mattmattmattmatt/base/primitives/icon/icons/sliders-vertical";
+export { x } from "@mattmattmattmatt/base/primitives/icon/icons/x";
+export { trendingUp } from "@mattmattmattmatt/base/primitives/icon/icons/trending-up";
+export { film } from "@mattmattmattmatt/base/primitives/icon/icons/film";
+export { video } from "@mattmattmattmatt/base/primitives/icon/icons/video";
+export { star } from "@mattmattmattmatt/base/primitives/icon/icons/star";
+export { list } from "@mattmattmattmatt/base/primitives/icon/icons/list";
+export { chevronLeft } from "@mattmattmattmatt/base/primitives/icon/icons/chevron-left";
+export { arrowUp } from "@mattmattmattmatt/base/primitives/icon/icons/arrow-up";
+export { arrowDown } from "@mattmattmattmatt/base/primitives/icon/icons/arrow-down";
+export { shieldCheck } from "@mattmattmattmatt/base/primitives/icon/icons/shield-check";
+export { shieldOff } from "@mattmattmattmatt/base/primitives/icon/icons/shield-off";
+export { history } from "@mattmattmattmatt/base/primitives/icon/icons/history";
+export { sparkles } from "@mattmattmattmatt/base/primitives/icon/icons/sparkles";
+export { images } from "@mattmattmattmatt/base/primitives/icon/icons/images";
+export { award } from "@mattmattmattmatt/base/primitives/icon/icons/award";
+export { maximize } from "@mattmattmattmatt/base/primitives/icon/icons/maximize";
+export { minimize } from "@mattmattmattmatt/base/primitives/icon/icons/minimize";
+export { rectangleHorizontal } from "@mattmattmattmatt/base/primitives/icon/icons/rectangle-horizontal";
+export { music } from "@mattmattmattmatt/base/primitives/icon/icons/music";
+export { disc3 } from "@mattmattmattmatt/base/primitives/icon/icons/disc-3";
+export { micVocal } from "@mattmattmattmatt/base/primitives/icon/icons/mic-vocal";
+export { tv } from "@mattmattmattmatt/base/primitives/icon/icons/tv";
+export { clapperboard } from "@mattmattmattmatt/base/primitives/icon/icons/clapperboard";
+export { tag } from "@mattmattmattmatt/base/primitives/icon/icons/tag";
+export { cpu } from "@mattmattmattmatt/base/primitives/icon/icons/cpu";
+export { externalLink } from "@mattmattmattmatt/base/primitives/icon/icons/external-link";
+export { calendar } from "@mattmattmattmatt/base/primitives/icon/icons/calendar";
+export { folderOutput } from "@mattmattmattmatt/base/primitives/icon/icons/folder-output";
+export { hardDriveUpload } from "@mattmattmattmatt/base/primitives/icon/icons/hard-drive-upload";
+export { server } from "@mattmattmattmatt/base/primitives/icon/icons/server";
+export { folder } from "@mattmattmattmatt/base/primitives/icon/icons/folder";
+export { book } from "@mattmattmattmatt/base/primitives/icon/icons/book";
+export { circleCheck } from "@mattmattmattmatt/base/primitives/icon/icons/circle-check";
+export { circleAlert } from "@mattmattmattmatt/base/primitives/icon/icons/circle-alert";
+export { captions } from "@mattmattmattmatt/base/primitives/icon/icons/captions";
+export { activity } from "@mattmattmattmatt/base/primitives/icon/icons/activity";
+export { triangleAlert } from "@mattmattmattmatt/base/primitives/icon/icons/triangle-alert";
+export { compass } from "@mattmattmattmatt/base/primitives/icon/icons/compass";
+export { gamepad2 } from "@mattmattmattmatt/base/primitives/icon/icons/gamepad-2";
+export { iconPackage as packageIcon } from "@mattmattmattmatt/base/primitives/icon/icons/package";
+export { panelLeftOpen } from "@mattmattmattmatt/base/primitives/icon/icons/panel-left-open";
+export { panelLeftClose } from "@mattmattmattmatt/base/primitives/icon/icons/panel-left-close";
+export { library } from "@mattmattmattmatt/base/primitives/icon/icons/library";
+export { chevronDown } from "@mattmattmattmatt/base/primitives/icon/icons/chevron-down";
+export { chevronRight } from "@mattmattmattmatt/base/primitives/icon/icons/chevron-right";
+export { layers } from "@mattmattmattmatt/base/primitives/icon/icons/layers";
+export { copy } from "@mattmattmattmatt/base/primitives/icon/icons/copy";
+export { check } from "@mattmattmattmatt/base/primitives/icon/icons/check";
+export { trash2 } from "@mattmattmattmatt/base/primitives/icon/icons/trash-2";
+export { circlePlus as plusCircle } from "@mattmattmattmatt/base/primitives/icon/icons/circle-plus";
+export { shuffle } from "@mattmattmattmatt/base/primitives/icon/icons/shuffle";
+export { repeat } from "@mattmattmattmatt/base/primitives/icon/icons/repeat";
+export { repeat1 } from "@mattmattmattmatt/base/primitives/icon/icons/repeat-1";
+export { skipBack } from "@mattmattmattmatt/base/primitives/icon/icons/skip-back";
+export { skipForward } from "@mattmattmattmatt/base/primitives/icon/icons/skip-forward";
+export { volume2 } from "@mattmattmattmatt/base/primitives/icon/icons/volume-2";
+export { volumeX } from "@mattmattmattmatt/base/primitives/icon/icons/volume-x";
+export { listMusic } from "@mattmattmattmatt/base/primitives/icon/icons/list-music";
+export { gauge } from "@mattmattmattmatt/base/primitives/icon/icons/gauge";
+export { info } from "@mattmattmattmatt/base/primitives/icon/icons/info";
+export { file } from "@mattmattmattmatt/base/primitives/icon/icons/file";
+export { magnet } from "@mattmattmattmatt/base/primitives/icon/icons/magnet";
+
+// Custom (no Base equivalent): ア — the first katakana of アニメ ("anime"), drawn
+// large as a single glyph for the Anime section. The Icon primitive's <svg>
+// wrapper sets fill="none" stroke="currentColor", so it's drawn FILLED
+// (fill=currentColor, stroke=none) and centered to fill the box.
+export const anime =
+  '<text x="12" y="12.5" text-anchor="middle" dominant-baseline="central" ' +
+  'fill="currentColor" stroke="none" ' +
+  "font-family=\"'Hiragino Sans','Hiragino Kaku Gothic Pro','Yu Gothic','Noto Sans JP',sans-serif\" " +
+  'font-size="23" font-weight="800">ア</text>';

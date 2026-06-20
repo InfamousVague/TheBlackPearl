@@ -1,0 +1,106 @@
+/* Ambient "aurora" app canvas — a near-black base lit by very soft teal + violet
+   glows so the glass surfaces layered on top have something to refract. Kept low
+   opacity + heavily blurred so it reads as depth, never as a gaudy gradient. */
+body {
+  background: #050507;
+}
+
+.app {
+  position: relative;
+  background:
+    radial-gradient(120% 90% at 8% -10%, rgba(45, 205, 214, 0.10) 0%, transparent 45%),
+    radial-gradient(110% 90% at 100% 8%, rgba(99, 142, 255, 0.11) 0%, transparent 48%),
+    radial-gradient(120% 120% at 50% 120%, rgba(91, 107, 214, 0.08) 0%, transparent 55%),
+    #050507;
+  /* NB: do NOT add `background-attachment: fixed` here. `.app` is height:100vh / overflow:hidden,
+     so it never scrolls — a fixed attachment bought us nothing visually. On macOS WKWebView (with
+     macOSPrivateApi) a fixed-attachment background is promoted to its own compositing layer that
+     blanks to BLACK when the app is deactivated/occluded — i.e. the whole window went black on
+     tab-out. Keeping the background scroll-local avoids that repaint bug. */
+}
+
+/* Two faint, slowly drifting blooms behind the content for extra life. They sit beneath
+   all chrome + content (own layer, pointer-transparent), drift in opposite directions for
+   gentle parallax, and breathe their opacity so the canvas feels alive without ever
+   reading as motion. Both respect reduced-motion. */
+.app::before,
+.app::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  filter: blur(45px);
+  will-change: transform, opacity;
+}
+.app::before {
+  inset: -20% -10% auto -10%;
+  height: 70%;
+  background:
+    radial-gradient(40% 60% at 20% 30%, rgba(45, 205, 214, 0.13), transparent 70%),
+    radial-gradient(45% 60% at 80% 20%, rgba(99, 142, 255, 0.14), transparent 72%);
+  opacity: 0.7;
+  animation: app-aurora-drift 28s var(--ease-in-out, ease-in-out) infinite alternate;
+}
+/* A second, slower bloom drifting the other way for depth. */
+.app::after {
+  inset: auto -10% -25% -10%;
+  height: 65%;
+  background:
+    radial-gradient(45% 60% at 72% 80%, rgba(91, 107, 214, 0.12), transparent 72%),
+    radial-gradient(40% 55% at 24% 92%, rgba(45, 205, 214, 0.09), transparent 70%);
+  opacity: 0.55;
+  animation: app-aurora-drift-2 36s var(--ease-in-out, ease-in-out) infinite alternate;
+}
+
+@keyframes app-aurora-drift {
+  0%   { transform: translate3d(-3%, -1%, 0) scale(1);   opacity: 0.55; }
+  50%  { opacity: 0.78; }
+  100% { transform: translate3d(4%, 3%, 0) scale(1.1);   opacity: 0.6; }
+}
+@keyframes app-aurora-drift-2 {
+  0%   { transform: translate3d(2%, 2%, 0) scale(1.05);  opacity: 0.42; }
+  50%  { opacity: 0.62; }
+  100% { transform: translate3d(-3%, -2%, 0) scale(1);   opacity: 0.48; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app::before,
+  .app::after { animation: none; }
+}
+
+/* Halftone dot "splash" in the top-left corner — a white/blue gradient revealed only
+   through a fine dot grid, then faded out from the corner so the dots thin into the
+   aurora. Rides the background layer (behind content) and never intercepts input. */
+.app-halftone {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: min(820px, 66vw);
+  height: min(740px, 70vh);
+  z-index: -1;
+  pointer-events: none;
+  /* Dot colour: cool white at the corner easing into the brand blue/indigo. */
+  background: linear-gradient(
+    135deg,
+    rgba(233, 241, 255, 0.90) 0%,
+    rgba(123, 162, 255, 0.66) 44%,
+    rgba(91, 107, 214, 0.42) 100%
+  );
+  /* Layer 1 = fine dot grid, layer 2 = corner falloff. Intersect them so only the dots
+     near the top-left survive, thinning out toward the lower-right for the splash. */
+  -webkit-mask-image:
+    radial-gradient(circle at center, #000 0 1.05px, transparent 1.5px),
+    radial-gradient(150% 150% at 0% 0%, #000 12%, transparent 76%);
+  mask-image:
+    radial-gradient(circle at center, #000 0 1.05px, transparent 1.5px),
+    radial-gradient(150% 150% at 0% 0%, #000 12%, transparent 76%);
+  -webkit-mask-size: 10px 10px, 100% 100%;
+  mask-size: 10px 10px, 100% 100%;
+  -webkit-mask-position: top left, top left;
+  mask-position: top left, top left;
+  -webkit-mask-repeat: repeat, no-repeat;
+  mask-repeat: repeat, no-repeat;
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+  opacity: 0.27;
+}

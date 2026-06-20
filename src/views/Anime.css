@@ -1,0 +1,57 @@
+/* Anime discovery — score badge, genre chips, synopsis. Cards reuse .poster-card. */
+
+.anime-score {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffd66b;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.62);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+
+.anime-library {
+  margin-top: 8px;
+}
+
+.anime-romaji {
+  margin: 2px 0 6px;
+  font-size: 13px;
+  color: var(--gg-text-muted);
+}
+
+.anime-genres {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0 2px;
+}
+.anime-genre {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gg-text-dim);
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--gg-border);
+  background: var(--gg-surface);
+}
+
+.anime-synopsis {
+  margin: 14px 0 0;
+  max-width: 64ch;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--gg-text-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

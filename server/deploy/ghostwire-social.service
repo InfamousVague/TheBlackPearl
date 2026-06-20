@@ -1,0 +1,25 @@
+[Unit]
+Description=GhostWire social coordination server (identity + friend-to-friend search routing)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust User/Group and WorkingDirectory to your install.
+User=ghostwire
+Group=ghostwire
+WorkingDirectory=/opt/ghostwire-social
+# Runtime config lives in the .env you filled from .env.example.
+EnvironmentFile=/opt/ghostwire-social/.env
+ExecStart=/usr/bin/node /opt/ghostwire-social/dist/index.js
+Restart=always
+RestartSec=3
+# Hardening — the process only needs its own dir and the network.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/ghostwire-social/data
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,88 @@
+[package]
+name = "ghosty"
+version = "2.0.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "ghosty_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `macos-private-api` backs the desktop window chrome (titleBarStyle Overlay /
+# traffic-light position) and native video fullscreen; it pairs with macOSPrivateApi
+# in tauri.macos.conf.json. tauri-build validates the base feature set against the
+# config allowlist, so it must live here (not in the per-target block below).
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+# OTA auto-update: the updater downloads + verifies a signed bundle against the
+# minisign pubkey in tauri.conf.json; process lets the in-app banner relaunch
+# after the swap. Config + flow live in tauri.conf.json / the React UpdateBanner.
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+librqbit = "8.1.1"
+axum = "0.8.9"
+tokio = { version = "1.52.3", features = ["full"] }
+tokio-util = { version = "0.7.18", features = ["io"] }
+anyhow = "1.0.102"
+# Catalog store + indexer
+rusqlite = { version = "0.32", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip"] }
+base64 = "0.22"
+# Gunzip the .srt.gz bodies OpenSubtitles' keyless download endpoint returns (served as a
+# gzip file, not transport-encoded, so reqwest's gzip feature doesn't cover it).
+flate2 = "1"
+rand = "0.8"
+sha2 = "0.10"
+# Verify the SAME minisign update signature the HTTP updater uses, so torrent-delivered
+# update bundles are gated on the exact same key before install (P2P self-update path).
+minisign-verify = "0.2"
+sha1 = "0.10"
+regex = "1"
+roxmltree = "0.20"
+rayon = "1.10"
+# Filesystem watcher (FSEvents on macOS) — auto-refreshes the library when files
+# land in the download folder (downloads finishing, the organize pass, etc.).
+notify-debouncer-mini = "0.4"
+# Pure-Rust audio tag read/write (ID3 / MP4 atoms / Vorbis comments) — no subprocess,
+# so embedded metadata travels with the file to any device. Used by the AI tag pass.
+lofty = "0.22"
+# Pure-Rust MKV/WebM demuxer. Powers the on-device MKV→fMP4 remux (src/remux.rs) so iOS,
+# which can't spawn ffmpeg, can still play Matroska files whose codecs are web-compatible
+# (H.264/HEVC video + AAC audio) by repackaging the container without re-encoding.
+matroska-demuxer = "0.7"
+sysinfo = { version = "0.38.4", default-features = false, features = ["disk"] }
+
+# Social P2P (P1.2): Ed25519 identity for the coordination server (challenge/response
+# auth, no passwords) + a WebSocket client for live presence and friend-to-friend
+# search/browse routing. rustls to match reqwest (no OpenSSL/native-tls).
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+
+# Single-instance: the engine binds a fixed loopback port, so a second launch would
+# crash on it. This focuses the running window and exits the new process instead.
+[target.'cfg(target_os = "macos")'.dependencies]
+tauri-plugin-single-instance = "2"
+
+# Dev-build performance: `tauri dev` compiles in debug, which leaves heavy dependencies
+# (librqbit, sha2, image/codec crates, the MKV remux path) unoptimized and very slow at
+# runtime. Optimize the *dependencies* (opt-level 3) while keeping our own crate at the
+# default debug opt-level, so `tauri dev` runs near release speed yet our code still
+# rebuilds fast on each change. One-time cost: deps recompile once after this lands.
+[profile.dev.package."*"]
+opt-level = 3
+codegen-units = 16
+

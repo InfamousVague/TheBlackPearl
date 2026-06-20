@@ -1,0 +1,221 @@
+/* Base site styles — dog-foods the token system */
+@import './tokens.css';
+
+/* ---- Reset ---- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+  font-family: var(--font-sans);
+  font-size: var(--text-base-size);
+  line-height: var(--text-base-line-height);
+  color: var(--color-text-primary);
+  background: var(--color-bg-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+body {
+  min-height: 100vh;
+}
+
+a { color: var(--color-text-secondary); text-decoration: none; transition: color 0.15s; }
+a:hover { color: var(--color-text-primary); }
+
+/* ---- App Shell ---- */
+.app-shell {
+  min-height: 100vh;
+}
+
+/* ---- Main Content ---- */
+.site-main {
+  margin-left: 220px;
+  margin-top: 48px;
+  padding: var(--sp-8) var(--sp-8);
+  max-width: 960px;
+  transition: margin-left 0.2s var(--ease-default);
+}
+
+
+.page-title {
+  font-size: var(--text-3xl-size);
+  font-weight: var(--text-3xl-weight);
+  line-height: var(--text-3xl-line-height);
+  letter-spacing: -0.02em;
+  margin-bottom: var(--sp-2);
+}
+
+.page-subtitle {
+  font-size: var(--text-lg-size);
+  font-weight: var(--weight-regular);
+  line-height: var(--text-lg-line-height);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--sp-8);
+}
+
+/* ---- Section ---- */
+.section {
+  margin-bottom: var(--sp-12);
+}
+
+.section__title {
+  font-size: var(--text-xl-size);
+  font-weight: var(--text-xl-weight);
+  line-height: var(--text-xl-line-height);
+  margin-bottom: var(--sp-4);
+}
+
+.section__desc {
+  font-size: var(--text-base-size);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--sp-6);
+  max-width: 600px;
+}
+
+/* ---- Token Table ---- */
+.token-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm-size);
+}
+
+.token-table th {
+  text-align: left;
+  padding: var(--sp-2) var(--sp-3);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-tertiary);
+  font-size: var(--text-xs-size);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--color-border-default);
+}
+
+.token-table td {
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--color-border-subtle);
+  vertical-align: middle;
+}
+
+.token-table code {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs-size);
+  background: var(--color-bg-elevated);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+/* ---- Side-by-Side Preview ---- */
+.preview-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-6);
+}
+
+.preview-pane {
+  padding: var(--sp-6);
+  border-radius: var(--radius-lg);
+  position: relative;
+  overflow: hidden;
+}
+
+.preview-pane--light {
+  background: #F0F0F0;
+}
+
+.preview-pane--dark {
+  background: #171717;
+  color: #FAFAFA;
+}
+
+.preview-pane__label {
+  position: absolute;
+  top: var(--sp-2);
+  right: var(--sp-3);
+  font-size: var(--text-xs-size);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+}
+
+/* ---- Hero Entrance Animations ---- */
+
+/* Title decipher characters */
+.page-title--animating .hero-char {
+  display: inline-block;
+  min-width: 0.05em; /* prevent layout shift on narrow chars */
+}
+
+.page-title--animating .hero-char--scrambling {
+  font-family: var(--font-mono);
+  opacity: 0.6;
+}
+
+.page-title--animating .hero-char--settled {
+  font-family: var(--font-sans);
+  animation: decipher-char 150ms var(--ease-out) forwards;
+}
+
+/* Subtitle fade + slide */
+.page-subtitle--animating {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.page-subtitle--visible {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 400ms var(--ease-out), transform 400ms var(--ease-out);
+}
+
+/* Spec card stagger */
+.spec-card--animating {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.spec-card--visible {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 500ms var(--ease-out), transform 500ms var(--ease-out);
+}
+
+@keyframes decipher-char {
+  from { opacity: 0.6; }
+  to { opacity: 1; }
+}
+
+/* ---- Overview Component Cards ---- */
+.overview-card {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-subtle);
+  text-decoration: none;
+  overflow: hidden;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+.overview-card:hover {
+  border-color: var(--color-border-default);
+  background: var(--color-overlay);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.overview-card__preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 80px;
+  padding: var(--sp-3);
+  pointer-events: none;
+  overflow: hidden;
+  background: var(--color-bg-inset);
+}
+
+.overview-card__label {
+  display: block;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--text-sm-size);
+  color: var(--color-text-primary);
+  border-top: 1px solid var(--color-border-subtle);
+}

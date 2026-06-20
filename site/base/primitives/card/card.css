@@ -1,0 +1,38 @@
+/* Card primitive */
+
+.card {
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+/* ---- Variants ---- */
+.card--elevated {
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-md);
+}
+.card--outlined {
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-default);
+}
+.card--filled {
+  background: var(--color-bg-secondary);
+}
+
+/* ---- Padding ---- */
+.card--padding-none { padding: 0; }
+.card--padding-sm { padding: var(--sp-3); }
+.card--padding-md { padding: var(--sp-4); }
+.card--padding-lg { padding: var(--sp-6); }
+
+/* ---- Interactive ---- */
+.card--interactive {
+  cursor: pointer;
+  transition: box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+.card--interactive:hover {
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-1px);
+}
+
+/* ---- Shape overrides ---- */
+.card--square { border-radius: var(--shape-square); }

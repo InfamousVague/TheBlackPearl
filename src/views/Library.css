@@ -1,0 +1,376 @@
+/* Library — a richer, more informative manager for every kept file across all media types:
+   an at-a-glance overview, a per-type breakdown, and dense rows with cover art + metadata. */
+
+/* Per-media-type accent. Custom properties inherit, so setting --t on a row also tints its
+   in-row bits (type tag, etc.); chips + bar segments carry their own data-type. */
+.lib-row[data-type="movie"], .lib-chip[data-type="movie"], .lib-bar-seg[data-type="movie"] { --t: #f5a524; }
+.lib-row[data-type="show"],  .lib-chip[data-type="show"],  .lib-bar-seg[data-type="show"]  { --t: #5b8def; }
+.lib-row[data-type="music"], .lib-chip[data-type="music"], .lib-bar-seg[data-type="music"] { --t: #5fe9da; }
+.lib-row[data-type="book"],  .lib-chip[data-type="book"],  .lib-bar-seg[data-type="book"]  { --t: #5fd07a; }
+.lib-row[data-type="game"],  .lib-chip[data-type="game"],  .lib-bar-seg[data-type="game"]  { --t: #a78bfa; }
+.lib-chip[data-type="all"] { --t: var(--gg-text-muted); }
+
+/* ---------- Library toolbar: title above, search + sort + refresh on one row ---------- */
+.lib-pagehead {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.lib-titlerow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.lib-titlegroup {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.lib-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Search shares the toolbar row with the sort toggle; it grows to fill the leftover width. */
+.lib-searchbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 6px 0 18px;
+  border-radius: 999px;
+  border: 1px solid var(--gg-glass-brd);
+  background: var(--gg-glass);
+  -webkit-backdrop-filter: blur(var(--gg-blur)) saturate(150%);
+  backdrop-filter: blur(var(--gg-blur)) saturate(150%);
+  box-shadow: inset 0 1px 0 var(--gg-glass-rim);
+  color: var(--gg-text-dim);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.lib-searchbar:focus-within {
+  border-color: color-mix(in srgb, var(--gg-seafoam, #5fe7c4) 60%, transparent);
+  box-shadow:
+    inset 0 1px 0 var(--gg-glass-rim),
+    0 0 0 3px color-mix(in srgb, var(--gg-seafoam, #5fe7c4) 20%, transparent);
+}
+.lib-searchbar > :first-child { color: var(--gg-seafoam, #5fe7c4); flex: none; display: inline-flex; }
+.lib-searchbar input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--gg-text);
+  font-family: inherit;
+  font-size: var(--text-base-size);
+  letter-spacing: -0.01em;
+}
+.lib-searchbar input::placeholder { color: var(--gg-text-dim); }
+.lib-searchbar-clear {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--gg-text-dim);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.lib-searchbar-clear:hover { color: var(--gg-text); background: var(--gg-surface-2); }
+
+/* ---------- Overview: metrics + composition bar ---------- */
+.lib-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 14px 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--gg-glass-brd);
+  background: var(--gg-glass);
+  -webkit-backdrop-filter: blur(var(--gg-blur)) saturate(150%);
+  backdrop-filter: blur(var(--gg-blur)) saturate(150%);
+  box-shadow: inset 0 1px 0 var(--gg-glass-rim);
+}
+.lib-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+}
+.lib-metric {
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  align-items: center;
+}
+.lib-metric-ic {
+  grid-row: 1 / 3;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--gg-seafoam, #5fe7c4) 13%, var(--gg-surface-2));
+  color: var(--gg-seafoam, #5fe7c4);
+}
+.lib-metric-val {
+  align-self: end;
+  font-size: var(--text-base-size);
+  font-weight: 700;
+  color: var(--gg-text);
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+.lib-metric-lbl {
+  align-self: start;
+  font-size: var(--text-xs-size);
+  color: var(--gg-text-dim);
+}
+.lib-bar {
+  display: flex;
+  gap: 3px;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.04);
+}
+.lib-bar-seg {
+  background: var(--t, var(--gg-text-muted));
+  border-radius: 3px;
+  min-width: 7px;
+}
+
+/* ---------- Type filter chips (double as the breakdown legend) ---------- */
+.lib-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.lib-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--gg-glass-brd);
+  background: var(--gg-surface);
+  color: var(--gg-text-muted);
+  font-family: inherit;
+  font-size: var(--text-sm-size);
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+.lib-chip > :first-child { color: var(--t, var(--gg-text-dim)); display: inline-flex; }
+.lib-chip:hover { border-color: var(--gg-border-strong); color: var(--gg-text); }
+.lib-chip.active {
+  color: var(--gg-text);
+  border-color: color-mix(in srgb, var(--t, var(--gg-accent)) 55%, transparent);
+  background: color-mix(in srgb, var(--t, var(--gg-accent)) 15%, var(--gg-surface));
+}
+.lib-chip-n {
+  font-variant-numeric: tabular-nums;
+  color: var(--gg-text-dim);
+  font-size: var(--text-xs-size);
+}
+.lib-chip.active .lib-chip-n { color: var(--gg-text-muted); }
+
+/* ---------- File list ---------- */
+.lib-list {
+  border: 1px solid var(--gg-glass-brd);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--gg-glass);
+  -webkit-backdrop-filter: blur(var(--gg-blur)) saturate(150%);
+  backdrop-filter: blur(var(--gg-blur)) saturate(150%);
+  box-shadow: inset 0 1px 0 var(--gg-glass-rim);
+}
+.lib-row {
+  display: grid;
+  grid-template-columns: 26px 38px minmax(0, 1fr) auto 96px 104px auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  cursor: default;
+  /* The library can hold thousands of rows; let the browser skip layout/paint for off-screen
+     rows (near-free virtualization). The reserved height keeps the scrollbar stable. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 68px;
+}
+.lib-head { content-visibility: visible; } /* header is always on screen */
+.lib-row + .lib-row { border-top: 1px solid var(--gg-border); }
+.lib-row:not(.lib-head):hover { background: rgba(255, 255, 255, 0.05); }
+.lib-row.is-sel { background: color-mix(in srgb, var(--gg-seafoam, #5fe7c4) 12%, transparent); }
+
+.lib-head {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--gg-text-dim);
+  font-size: var(--text-xs-size);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 8px 14px;
+}
+
+.lib-check { display: inline-flex; align-items: center; cursor: pointer; }
+.lib-check input { width: 15px; height: 15px; accent-color: var(--gg-seafoam, var(--gg-accent)); cursor: pointer; }
+
+/* Cover-art thumbnail (reuses the global .poster glyph/img machinery). */
+.lib-cover { position: relative; width: 38px; height: 54px; }
+.lib-cover .poster {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  border-radius: 7px;
+  border: 1px solid var(--gg-glass-brd);
+}
+.lib-cover .poster-glyph { color: rgba(255, 255, 255, 0.82); }
+.lib-cover-play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.46);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.lib-row:hover .lib-cover-play,
+.lib-cover-play:focus-visible { opacity: 1; }
+
+.lib-name { min-width: 0; }
+.lib-title {
+  font-size: var(--text-sm-size);
+  font-weight: 600;
+  color: var(--gg-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lib-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+  min-width: 0;
+}
+.lib-type-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 1px 8px 1px 6px;
+  border-radius: 999px;
+  font-size: var(--text-xs-size);
+  font-weight: 600;
+  color: var(--t, var(--gg-text-muted));
+  background: color-mix(in srgb, var(--t, #888) 15%, transparent);
+}
+.lib-sub-text {
+  font-size: var(--text-xs-size);
+  color: var(--gg-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Quality + format tags. */
+.lib-c-tags {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.lib-tag {
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--gg-surface-2);
+  color: var(--gg-text-muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.lib-tag-q {
+  background: color-mix(in srgb, var(--gg-seafoam, #5fe7c4) 18%, transparent);
+  color: var(--gg-seafoam, #5fe7c4);
+}
+
+.lib-c-size,
+.lib-c-added {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-xs-size);
+  color: var(--gg-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.lib-c-size > :first-child,
+.lib-c-added > :first-child { color: var(--gg-text-dim); display: inline-flex; }
+
+.lib-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  justify-content: flex-end;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.lib-row:hover .lib-actions,
+.lib-row.is-sel .lib-actions { opacity: 1; }
+.lib-act {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--gg-text-muted);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.lib-act:hover { background: var(--gg-surface-2); color: var(--gg-text); }
+.lib-act.danger:hover { color: var(--gg-danger, #d85b5b); }
+
+/* Sticky multi-select action bar at the bottom of the list. */
+.lib-bulkbar {
+  position: sticky;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 6px;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--gg-border-strong);
+  background: var(--gg-surface);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+}
+.lib-bulk-n {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--text-sm-size);
+  color: var(--gg-text);
+  font-weight: 600;
+}
+.lib-bulk-n > :first-child { color: var(--gg-seafoam, var(--gg-accent)); display: inline-flex; }
+.lib-bulk-acts { display: flex; align-items: center; gap: 8px; }
+
+@media (max-width: 820px) {
+  .lib-row { grid-template-columns: 24px 38px minmax(0, 1fr) auto auto; gap: 10px; }
+  .lib-c-tags, .lib-c-added { display: none; }
+  .lib-metrics { gap: 10px 18px; }
+}

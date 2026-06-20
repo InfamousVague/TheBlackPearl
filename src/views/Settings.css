@@ -1,0 +1,8 @@
+/* Settings — the category sub-nav lives in the shell Sidebar card (like other sections);
+   this is just the focused pane per category. */
+.settings-pane {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}

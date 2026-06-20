@@ -1,0 +1,122 @@
+/* TV Shows "Add to Library" panel — co-located to avoid touching the shared app.css. */
+.addlib {
+  border: 1px solid var(--gg-border);
+  border-radius: var(--radius-lg);
+  background: var(--gg-surface);
+  margin-bottom: 18px;
+  overflow: hidden;
+}
+.addlib-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 13px 16px;
+  border: none;
+  background: transparent;
+  color: var(--gg-text);
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.addlib-head:hover { background: var(--gg-surface-2); }
+.addlib-title { font-weight: 600; font-size: var(--text-sm-size); }
+.addlib-hint { color: var(--gg-text-dim); font-size: var(--text-xs-size); }
+.addlib-caret {
+  margin-left: auto;
+  color: var(--gg-text-dim);
+  display: inline-flex;
+  transition: transform 0.15s ease;
+}
+.addlib-caret.open { transform: rotate(180deg); }
+.addlib-body {
+  padding: 4px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid var(--gg-border);
+}
+.addlib-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.addlib-controls > :last-child { margin-left: auto; }
+.addlib-count { color: var(--gg-text-dim); font-size: var(--text-sm-size); }
+.addlib-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.addlib-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--gg-border);
+  border-radius: var(--radius-md);
+  background: var(--gg-surface-2);
+  color: var(--gg-text);
+  font-family: inherit;
+  font-size: var(--text-sm-size);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.addlib-row:hover { border-color: var(--gg-border-strong); }
+.addlib-row.sel { border-color: var(--gg-accent); background: var(--gg-accent-soft); }
+.addlib-check {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1.5px solid var(--gg-border-strong);
+  display: grid;
+  place-items: center;
+  color: #fff;
+}
+.addlib-check.on { background: var(--gg-accent); border-color: var(--gg-accent); }
+.addlib-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.addlib-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding: 3px 7px;
+  border-radius: 6px;
+}
+.addlib-badge.pack { color: var(--gg-accent); background: var(--gg-accent-soft); }
+.addlib-badge.ep {
+  color: var(--gg-text-dim);
+  background: var(--gg-surface);
+  border: 1px solid var(--gg-border);
+}
+.addlib-size {
+  flex-shrink: 0;
+  color: var(--gg-text-dim);
+  font-size: var(--text-xs-size);
+  font-variant-numeric: tabular-nums;
+  min-width: 64px;
+  text-align: right;
+}
+.addlib-seed {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--gg-hot);
+  font-size: var(--text-xs-size);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 48px;
+  justify-content: flex-end;
+}

@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically pick up new GhostWire releases to seed
+
+[Timer]
+# Check a few times a day for a freshly published release to add to the seeder.
+OnCalendar=*-*-* 0/6:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

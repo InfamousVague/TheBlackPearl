@@ -1,0 +1,160 @@
+/* Discover category feeds: hero billboard + rows. */
+.disc-feed {
+  display: grid;
+  /* Pin the single column to minmax(0, 1fr) and let children shrink so the inner poster
+     rails scroll internally instead of widening the page. Without this the default `auto`
+     track sizes to its widest row's content, blowing the whole Discover view past the
+     viewport (search bar + tabs + hero get clipped under the sidebar). Mirrors the
+     .section-stack / .music-browse min-width:0 pattern used elsewhere. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+}
+.disc-feed > * {
+  min-width: 0;
+}
+
+/* Items with no torrent in any of the user's sources are dimmed (still clickable). */
+.poster-card.is-unavailable {
+  opacity: 0.5;
+  transition: opacity 160ms ease;
+}
+.poster-card.is-unavailable:hover {
+  opacity: 0.78;
+}
+.disc-hero.is-unavailable .disc-hero-art,
+.disc-hero.is-unavailable .disc-hero-title,
+.disc-hero.is-unavailable .disc-hero-meta,
+.disc-hero.is-unavailable .disc-hero-overview {
+  opacity: 0.62;
+}
+.disc-hero-na {
+  margin-left: 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--gg-text-dim, rgba(255, 255, 255, 0.6));
+}
+
+/* ---- hero billboard ---- */
+.disc-hero {
+  position: relative;
+  border-radius: var(--radius-lg, 18px);
+  overflow: hidden;
+  min-height: 260px;
+  border: 1px solid color-mix(in srgb, var(--outline-variant, rgba(255, 255, 255, 0.1)) 100%, transparent);
+}
+
+.disc-hero-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center 30%;
+  transform: scale(1.12);
+  filter: blur(22px) saturate(1.15) brightness(0.55);
+}
+
+.disc-hero-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.78) 0%, rgba(0, 0, 0, 0.5) 42%, rgba(0, 0, 0, 0.15) 100%),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0) 55%);
+}
+
+.disc-hero-inner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 24px 26px;
+}
+
+.disc-hero-art {
+  flex: none;
+  width: 132px;
+  aspect-ratio: 2 / 3;
+  border-radius: 12px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+  background: rgba(255, 255, 255, 0.04);
+}
+.disc-hero-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.disc-hero-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  max-width: 60ch;
+}
+
+.disc-hero-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--gg-accent, #67d68a) 100%, transparent);
+}
+
+.disc-hero-title {
+  margin: 0;
+  font-size: clamp(22px, 3.4vw, 34px);
+  font-weight: 800;
+  line-height: 1.06;
+  letter-spacing: -0.02em;
+  color: #fff;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.disc-hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--gg-text-dim, rgba(255, 255, 255, 0.72));
+}
+.disc-hero-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.disc-hero-meta > span:not(:last-child)::after {
+  content: "·";
+  margin-left: 8px;
+  opacity: 0.5;
+}
+.disc-hero-rating {
+  color: #f5c518;
+  font-weight: 700;
+}
+.disc-hero-sub::after { content: none !important; }
+
+.disc-hero-overview {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.82);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.disc-hero-cta {
+  margin-top: 4px;
+}
+
+@media (max-width: 720px) {
+  .disc-hero-art { width: 96px; }
+  .disc-hero-inner { padding: 18px; gap: 16px; }
+}

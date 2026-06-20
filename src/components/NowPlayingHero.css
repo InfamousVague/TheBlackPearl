@@ -1,0 +1,354 @@
+/* Positioning context for the hero + its EQ popover. The popover lives OUTSIDE
+   .np-hero so the hero's `overflow: hidden` (needed for the full-bleed visualizer
+   + rounded corners) can't clip the tall equalizer panel. */
+.np-hero-wrap {
+  position: relative;
+  z-index: 1;
+}
+
+/* Immersive Music-page now-playing header with a full-bleed visualizer. */
+.np-hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  /* Neutral dark-glass that matches the navigation rail (no teal tint). */
+  border: 1px solid var(--color-glass-border);
+  background: var(--gg-chrome);
+  -webkit-backdrop-filter: blur(var(--gg-chrome-blur)) saturate(160%);
+  backdrop-filter: blur(var(--gg-chrome-blur)) saturate(160%);
+  min-height: 240px;
+  margin-bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  box-shadow:
+    inset 0 1px 0 var(--color-glass-rim),
+    0 12px 28px var(--color-glass-shadow);
+  isolation: isolate;
+  /* Visualizer + seek bar + active toggles read these (white → seafoam brand). */
+  --viz-accent: #ffffff;
+  --viz-accent-2: var(--gg-seafoam);
+}
+
+/* The visualizer canvas fills the whole header behind the controls. */
+.np-hero-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* Visualizer reads --viz-accent / --viz-accent-2 (inherited from .np-hero). */
+  color: var(--gg-seafoam);
+}
+
+/* Darken edges + bottom so text stays legible over busy visuals. */
+.np-hero-scrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, 0.35) 100%),
+    linear-gradient(180deg, rgba(6, 6, 10, 0.35) 0%, rgba(6, 6, 10, 0) 30%, rgba(6, 6, 10, 0.72) 100%);
+}
+
+.np-hero-top {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+}
+
+.np-hero-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(8px);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.np-hero-modelabel {
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 78px;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+
+.np-hero-modebtn,
+.np-hero-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.np-hero-modebtn:hover,
+.np-hero-iconbtn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.np-hero-topright {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.np-hero-iconbtn {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+}
+.np-hero-iconbtn.on {
+  background: color-mix(in srgb, var(--gg-seafoam) 30%, transparent);
+  border-color: color-mix(in srgb, var(--gg-seafoam) 55%, transparent);
+  color: #fff;
+}
+
+/* EQ popover anchored to the top-right controls. */
+.np-hero-eq {
+  position: absolute;
+  top: 52px;
+  right: 14px;
+  z-index: 6;
+  animation: np-hero-eq-in 0.16s ease;
+}
+@keyframes np-hero-eq-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.np-hero-body {
+  position: relative;
+  z-index: 2;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 20px 20px;
+  margin-top: 24px;
+}
+
+.np-hero-art {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 160px;
+  height: 160px;
+  border-radius: 18px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.np-hero-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.np-hero-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.np-hero-meta {
+  min-width: 0;
+}
+.np-hero-title {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.15;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+}
+.np-hero-artist {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.np-hero-album {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.np-hero-scrubrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.np-hero-time {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.7);
+  min-width: 36px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.nph-seek {
+  position: relative;
+  flex: 1 1 auto;
+  padding: 8px 0;
+  cursor: pointer;
+  touch-action: none;
+}
+.nph-seek-track {
+  position: relative;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  overflow: visible;
+}
+.nph-seek-buffered {
+  position: absolute;
+  inset: 0 auto 0 0;
+  height: 100%;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+}
+.nph-seek-played {
+  position: absolute;
+  inset: 0 auto 0 0;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--viz-accent, #ffffff), var(--viz-accent-2, #5fe9da));
+}
+.nph-seek-thumb {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.nph-seek:hover .nph-seek-thumb {
+  opacity: 1;
+}
+
+.np-hero-controls {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 6px;
+}
+.nph-transport {
+  grid-column: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.nph-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+.nph-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+.nph-btn:active {
+  transform: scale(0.92);
+}
+.nph-btn.on {
+  color: var(--gg-seafoam);
+}
+.nph-play {
+  width: 48px;
+  height: 48px;
+  background: var(--gg-btn-white);
+  color: #0a0a0f;
+}
+.nph-play:hover {
+  background: var(--gg-btn-white);
+  color: #0a0a0f;
+  transform: scale(1.05);
+}
+.nph-like.liked {
+  color: #f472b6;
+}
+
+.nph-volume {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  grid-column: 3;
+  justify-self: end;
+}
+.nph-vol-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 90px;
+  height: 14px;
+  background: transparent;
+  cursor: pointer;
+}
+.nph-vol-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, #ffffff, var(--gg-seafoam)) left center / var(--vol, 100%) 100% no-repeat,
+    rgba(255, 255, 255, 0.18);
+}
+.nph-vol-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+@media (max-width: 720px) {
+  .np-hero-art {
+    width: 96px;
+    height: 96px;
+  }
+  .np-hero-title {
+    font-size: 20px;
+  }
+  .nph-vol-slider {
+    display: none;
+  }
+}

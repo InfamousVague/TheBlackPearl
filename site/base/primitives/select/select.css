@@ -1,0 +1,114 @@
+/* Select primitive */
+
+/* ---- Wrapper (visual box) ---- */
+.select-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+  font-family: var(--font-sans);
+  color: var(--color-text-primary);
+  transition: all var(--transition-fast);
+}
+
+/* ---- Sizes ---- */
+.select-wrapper--sm {
+  font-size: var(--text-sm-size);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--radius-sm);
+  gap: var(--sp-1);
+}
+.select-wrapper--md {
+  font-size: var(--text-base-size);
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--radius-md);
+  gap: var(--sp-2);
+}
+.select-wrapper--lg {
+  font-size: var(--text-lg-size);
+  padding: var(--sp-3) var(--sp-6);
+  border-radius: var(--radius-md);
+  gap: var(--sp-2);
+}
+
+/* ---- Variants ---- */
+.select-wrapper--outline {
+  border: 1px solid var(--color-border-default);
+  background: transparent;
+}
+.select-wrapper--filled {
+  border: 1px solid transparent;
+  background: var(--color-bg-inset);
+}
+.select-wrapper--ghost {
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+/* ---- Focus ---- */
+.select-wrapper:focus-within {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-subtle);
+}
+
+/* ---- Status intents ---- */
+.select-wrapper--error { border-color: var(--color-error); }
+.select-wrapper--error:focus-within { border-color: var(--color-error); box-shadow: 0 0 0 3px var(--color-error-subtle); }
+
+.select-wrapper--warning { border-color: var(--color-warning); }
+.select-wrapper--warning:focus-within { border-color: var(--color-warning); box-shadow: 0 0 0 3px var(--color-warning-subtle); }
+
+.select-wrapper--success { border-color: var(--color-success); }
+.select-wrapper--success:focus-within { border-color: var(--color-success); box-shadow: 0 0 0 3px var(--color-success-subtle); }
+
+.select-wrapper--info { border-color: var(--color-info); }
+.select-wrapper--info:focus-within { border-color: var(--color-info); box-shadow: 0 0 0 3px var(--color-info-subtle); }
+
+/* ---- Loading ---- */
+.select-wrapper--loading {
+  cursor: default;
+}
+
+/* ---- Disabled ---- */
+.select-wrapper--disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.select-wrapper--disabled .select {
+  cursor: not-allowed;
+}
+
+/* ---- Select element ---- */
+.select {
+  flex: 1;
+  min-width: 0;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  outline: none;
+  font-family: inherit;
+  padding: 0;
+  appearance: none;
+  cursor: pointer;
+}
+
+/* ---- Placeholder (unselected) ---- */
+.select:invalid,
+.select--placeholder {
+  color: var(--color-text-tertiary);
+}
+
+/* ---- Chevron icon ---- */
+.select-wrapper__icon {
+  display: flex;
+  align-items: center;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+/* ---- Shape overrides ---- */
+.select-wrapper--square { border-radius: var(--shape-square) !important; }
+.select-wrapper--pill { border-radius: var(--shape-pill) !important; }

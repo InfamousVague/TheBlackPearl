@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "visualizer",
+  "description": "The popped-out music visualizer window: events for streamed audio data plus its own window controls (drag/close/minimize/fullscreen).",
+  "platforms": ["macOS", "windows", "linux"],
+  "windows": ["visualizer"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-set-focus"
+  ]
+}

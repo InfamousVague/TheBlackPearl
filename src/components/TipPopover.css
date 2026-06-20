@@ -1,0 +1,425 @@
+/* TipPopover — self-contained styling for the heart-pill nav widget.
+   Mirrors the desktop app's TipDropdown.css visual contract (deck
+   geometry, glass-morphism cards, brand tints) but with kebab-case
+   class names + literal color values so it can land on either
+   marketing site without depending on per-site CSS variables.
+
+   When changing one of TipDropdown.css / TipPopover.css, update both
+   so the in-app and on-web tip jars don't drift visually. */
+
+.tip-popover-wrap {
+  position: relative;
+  flex-shrink: 0;
+  /* Stay above mostly-anything in the surrounding nav so the panel
+     can hang below cleanly. */
+  z-index: 50;
+}
+
+/* ──────────────── Trigger ──────────────── */
+
+.tip-popover-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.78);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+/* Hover / focus / open state — the chip floods into its "support
+   red" brand colour, the way the Discord button goes Discord-
+   purple. The heart icon is already a warm coral at rest (#ff7e7e);
+   on hover the whole chip catches up so the affordance reads as
+   one bright pill rather than a generic outline button. The
+   `--open` state holds the colour while the popover is showing so
+   the chip stays visually anchored to its drawer. */
+.tip-popover-trigger:hover,
+.tip-popover-trigger:focus-visible,
+.tip-popover-trigger--open {
+  color: #ffffff;
+  background: #dc2626;
+  border-color: #dc2626;
+  outline: none;
+}
+
+.tip-popover-trigger:hover .tip-popover-trigger-icon,
+.tip-popover-trigger:focus-visible .tip-popover-trigger-icon,
+.tip-popover-trigger--open .tip-popover-trigger-icon {
+  /* Heart pops white against the red fill so the silhouette
+     stays legible — the resting coral would muddy on red. */
+  color: #ffffff;
+}
+
+.tip-popover-trigger-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Subtle warm wash on the heart so the affordance doesn't read as
+     a generic action button. Stays low-contrast against the trigger
+     fill so it doesn't shout. */
+  color: #ff7e7e;
+}
+
+.tip-popover-trigger-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.tip-popover-trigger-label {
+  white-space: nowrap;
+}
+
+/* ──────────────── Panel (chrome-less) ──────────────── */
+/* The panel itself has no background, border, or shadow — only the
+   cards float, anchored beneath the trigger. */
+
+.tip-popover-panel {
+  position: absolute;
+  top: calc(100% + 14px);
+  /* Anchor the right edge of the (440px wide) panel near the right
+     edge of the trigger, with breathing room. The deck is wider than
+     the trigger so the panel hangs to the LEFT — using a calc that
+     clamps to the viewport edge prevents overflow on tighter nav
+     positions. */
+  right: 0;
+  width: min(440px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  overflow: visible;
+  z-index: 200;
+  animation: tip-popover-panel-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  transform-origin: top right;
+}
+
+@keyframes tip-popover-panel-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tip-popover-panel { animation: none; }
+}
+
+/* ──────────────── Stack (deck) ──────────────── */
+/* Cards absolute-positioned at the same origin and offset by depth.
+   Wheel / touch / arrow keys rotate activeIdx; the data-depth attr
+   re-renders, and CSS transitions handle the smooth shuffle. */
+
+.tip-popover-stack {
+  position: relative;
+  /* Card body is ~220px tall; each peeking-back-card adds ~46px. */
+  height: calc(220px + (var(--deck-size, 4) - 1) * 46px);
+  margin: 0 6px;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.tip-popover-stack > .tip-popover-card {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  transition:
+    transform 360ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 240ms ease;
+}
+
+.tip-popover-stack > .tip-popover-card[data-depth="0"] {
+  transform: translateY(calc((var(--deck-size, 4) - 1) * 46px));
+  z-index: 100;
+}
+.tip-popover-stack > .tip-popover-card[data-depth="1"] {
+  transform: translateY(calc((var(--deck-size, 4) - 2) * 46px));
+  z-index: 99;
+  filter: brightness(0.92);
+}
+.tip-popover-stack > .tip-popover-card[data-depth="2"] {
+  transform: translateY(calc((var(--deck-size, 4) - 3) * 46px));
+  z-index: 98;
+  filter: brightness(0.86);
+}
+.tip-popover-stack > .tip-popover-card[data-depth="3"] {
+  transform: translateY(calc((var(--deck-size, 4) - 4) * 46px));
+  z-index: 97;
+  filter: brightness(0.80);
+}
+.tip-popover-stack > .tip-popover-card[data-depth="4"] {
+  transform: translateY(calc((var(--deck-size, 4) - 5) * 46px));
+  z-index: 96;
+  filter: brightness(0.74);
+}
+.tip-popover-stack > .tip-popover-card[data-depth="5"] {
+  transform: translateY(calc((var(--deck-size, 4) - 6) * 46px));
+  z-index: 95;
+  filter: brightness(0.68);
+}
+
+.tip-popover-stack > .tip-popover-card:not([data-active]) {
+  cursor: pointer;
+}
+.tip-popover-stack > .tip-popover-card:not([data-active]):hover {
+  filter: brightness(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tip-popover-stack > .tip-popover-card { transition: none; }
+}
+
+/* ──────────────── Card shell ──────────────── */
+/* Glass surface + 70/30 split (left main / right QR strip). */
+
+.tip-popover-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30%;
+  border-radius: 18px;
+  overflow: hidden;
+  isolation: isolate;
+  background: rgba(15, 15, 22, 0.92);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 14px 36px rgba(0, 0, 0, 0.5);
+  min-height: 140px;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.tip-popover-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at 100% 0%,
+    var(--brand-tint, rgba(155, 166, 237, 0.18)) 0%,
+    transparent 55%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+.tip-popover-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ──────────────── Main (left) zone ──────────────── */
+
+.tip-popover-card-main {
+  padding: 22px 22px 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 18px;
+}
+
+.tip-popover-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tip-popover-card-title {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: rgba(255, 255, 255, 0.96);
+  line-height: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.tip-popover-card-title-dot {
+  color: inherit;
+}
+
+.tip-popover-card-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.tip-popover-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.tip-popover-card-meta-label {
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.78);
+  letter-spacing: 0.14em;
+}
+
+.tip-popover-card-meta-sep {
+  opacity: 0.5;
+}
+
+.tip-popover-card-meta-value {
+  font-family: "SF Mono", "JetBrains Mono", "Fira Code", monospace;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  font-size: 11.5px;
+}
+
+.tip-popover-card-addr {
+  display: block;
+  font-family: "SF Mono", "JetBrains Mono", "Fira Code", monospace;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: -0.005em;
+  color: rgba(255, 255, 255, 0.96);
+  word-break: break-all;
+  user-select: text;
+  -webkit-user-select: text;
+  min-width: 0;
+}
+
+/* ──────────────── Brand badge (inline with title) ──────────────── */
+
+.tip-popover-card-badge {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  position: relative;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.tip-popover-card-badge svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.18));
+}
+
+/* ──────────────── Right strip (QR + Copy) ──────────────── */
+
+.tip-popover-card-strip {
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.18);
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.tip-popover-card-qr {
+  background: #FFFFFF;
+  padding: 5px;
+  border-radius: 8px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.45),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.04);
+  align-self: center;
+}
+
+.tip-popover-card-qr-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 116px;
+}
+
+.tip-popover-card-copy {
+  width: 100%;
+  padding: 7px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: rgba(255, 255, 255, 0.78);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.tip-popover-card-copy:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.20);
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.tip-popover-card-copy[data-copied] {
+  background: rgba(74, 222, 128, 0.14);
+  border-color: rgba(74, 222, 128, 0.35);
+  color: #86EFAC;
+}
+
+.tip-popover-card-copy-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tip-popover-card-copy-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ──────────────── Tight viewports ──────────────── */
+/* Below ~480px the deck would overflow horizontally — drop the panel
+   into a fixed bottom sheet anchored to the viewport instead of the
+   trigger, so the cards still fit + remain touch-friendly. */
+
+@media (max-width: 520px) {
+  .tip-popover-panel {
+    position: fixed;
+    top: auto;
+    bottom: 16px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+    transform-origin: bottom right;
+  }
+  .tip-popover-trigger-label {
+    /* Nav rows on mobile are tight — collapse to icon only. */
+    display: none;
+  }
+  .tip-popover-trigger {
+    width: 32px;
+    padding: 0;
+    justify-content: center;
+  }
+}

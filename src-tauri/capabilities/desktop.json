@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "Desktop-only window permissions (dragging the frameless window). Not applied on iOS, where the WebView is fullscreen in a native shell.",
+  "platforms": ["macOS", "windows", "linux"],
+  "windows": ["main"],
+  "permissions": [
+    "core:window:allow-start-dragging"
+  ]
+}

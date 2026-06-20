@@ -1,0 +1,167 @@
+.vpn-killswitch {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8, 10, 16, 0.86);
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
+  animation: vpn-ks-fade 160ms ease-out;
+}
+
+@keyframes vpn-ks-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.vpn-killswitch-card {
+  width: min(440px, 100%);
+  border-radius: 18px;
+  padding: 28px 28px 24px;
+  text-align: center;
+  background: linear-gradient(180deg, rgba(30, 33, 44, 0.96), rgba(20, 22, 30, 0.96));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 80, 80, 0.16);
+  color: #f4f5f8;
+}
+
+.vpn-killswitch-card h2 {
+  margin: 0 0 12px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.vpn-killswitch-card p {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: rgba(244, 245, 248, 0.82);
+}
+
+.vpn-killswitch-card p strong {
+  color: #ff9a9a;
+  font-weight: 700;
+}
+
+/* Central VPN power button: red while the VPN is down, green once it reconnects. */
+.vpn-power {
+  appearance: none;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 150px;
+  height: 150px;
+  margin: 18px auto 6px;
+  border-radius: 50%;
+  cursor: pointer;
+  background: radial-gradient(circle at 50% 38%, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.18));
+  transition: border-color 200ms ease, box-shadow 200ms ease, transform 120ms ease, color 200ms ease;
+}
+
+.vpn-power:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.vpn-power:disabled {
+  cursor: default;
+}
+
+.vpn-power-glyph {
+  width: 46px;
+  height: 46px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+.vpn-power-label {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+/* Offline (VPN still down) — red, gently pulsing. */
+.vpn-power-offline {
+  color: #ff6b6b;
+  border: 2px solid rgba(229, 72, 77, 0.85);
+  box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.5), 0 0 28px rgba(229, 72, 77, 0.28) inset;
+  animation: vpn-power-pulse 1.8s ease-out infinite;
+}
+
+.vpn-power-offline:hover:not(:disabled) {
+  border-color: #ff6b6b;
+}
+
+@keyframes vpn-power-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.45), 0 0 28px rgba(229, 72, 77, 0.28) inset; }
+  70% { box-shadow: 0 0 0 16px rgba(229, 72, 77, 0), 0 0 28px rgba(229, 72, 77, 0.28) inset; }
+  100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0), 0 0 28px rgba(229, 72, 77, 0.28) inset; }
+}
+
+/* Online (VPN back) — green, steady glow. */
+.vpn-power-online {
+  color: #4ade80;
+  border: 2px solid rgba(52, 211, 113, 0.9);
+  box-shadow: 0 0 22px rgba(52, 211, 113, 0.45), 0 0 28px rgba(52, 211, 113, 0.22) inset;
+  animation: none;
+}
+
+.vpn-power-online:hover:not(:disabled) {
+  box-shadow: 0 0 30px rgba(52, 211, 113, 0.6), 0 0 28px rgba(52, 211, 113, 0.26) inset;
+}
+
+.vpn-killswitch-status {
+  font-size: 13px !important;
+  font-weight: 600;
+  margin: 4px 0 6px !important;
+  color: rgba(255, 122, 122, 0.92) !important;
+}
+
+.vpn-killswitch-status[data-online="true"] {
+  color: #6ee7a0 !important;
+}
+
+.vpn-killswitch-iface {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px !important;
+  color: rgba(244, 245, 248, 0.55) !important;
+}
+
+.vpn-killswitch-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+.vpn-killswitch-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  padding: 11px 22px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 120ms ease, background 120ms ease, opacity 120ms ease;
+}
+
+.vpn-killswitch-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.vpn-killswitch-btn-danger {
+  background: rgba(229, 72, 77, 0.14);
+  border-color: rgba(229, 72, 77, 0.4);
+  color: #ff9a9a;
+}
+
+.vpn-killswitch-btn-danger:hover:not(:disabled) {
+  background: rgba(229, 72, 77, 0.22);
+}
