@@ -707,6 +707,34 @@ body {
   color: var(--gg-text-dim);
 }
 
+/* ---------- Join Discord pill ----------
+ * Ported from libre.academy's nav. Same 28px chip geometry as .vpn-chip so the
+ * header actions read as one strip; hover floods Discord blurple (#5865F2). */
+.topbar-discord {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 999px;
+  font-size: var(--text-sm-size);
+  font-weight: 600;
+  border: 1px solid var(--gg-glass-brd);
+  color: var(--gg-text-muted);
+  background: var(--gg-chrome);
+  -webkit-backdrop-filter: blur(var(--gg-blur)) saturate(160%);
+  backdrop-filter: blur(var(--gg-blur)) saturate(160%);
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.topbar-discord svg { display: block; }
+.topbar-discord:hover {
+  color: #fff;
+  border-color: rgba(88, 101, 242, 0.55);
+  background: rgba(88, 101, 242, 0.18);
+}
+
 /* ---------- Support tip-jar pill ----------
  * The shared TipPopover.css ships a taller, lighter marketing-nav trigger
  * (kept byte-identical with libre.academy). In the app's top bar we want it to
