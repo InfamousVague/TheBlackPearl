@@ -705,7 +705,10 @@ export default function App() {
     return () => window.clearTimeout(id);
   }, [shareToast]);
 
-  // --- Auto-cleanup: organize + enrich downloads as they finish (enabled by default) ---
+  // --- Auto-cleanup: organize + enrich downloads as they finish (OPT-IN; OFF by default) ---
+  // Off by default because organizing moves/renames files out of Downloads/, and a torrent that
+  // briefly reports ~99.9% can still be writing/verifying — moving its files then corrupts the
+  // transfer. So cleaning is MANUAL unless the user explicitly enables it in Settings.
   const dlProgressRef = useRef<Map<string, number>>(new Map());
   const cleanupTimerRef = useRef<number | null>(null);
 
@@ -715,7 +718,7 @@ export default function App() {
       return;
     }
     const setting = await getSetting("auto_cleanup").catch(() => null);
-    if (setting === "false") return; // enabled by default when unset
+    if (setting !== "true") return; // OFF unless explicitly opted in — cleaning is manual by default
     await startOrganize({ silent: true }); // tidy new files into Organized/ (chip shows progress)
     try {
       await aiScan(60); // enrich: clean titles, posters, ratings, index

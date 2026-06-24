@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::export;
 
@@ -232,6 +232,9 @@ pub struct SyncResult {
 }
 
 /// Copy `files` into `dest_root`, skipping tracks already present at the same byte size.
+/// A small hidden `.ghostwire-sync.json` manifest at `dest_root` records what was synced
+/// (rel → size), so a re-sync skips unchanged tracks straight from the manifest — no
+/// per-file stat against the (often slow) device, which is what made big re-syncs crawl.
 /// When `mirror` is set, audio files under `dest_root` that aren't in `files` are deleted
 /// and emptied folders pruned. Each outcome is reported via `on_progress` as it happens.
 pub fn sync(
@@ -261,12 +264,22 @@ pub fn sync(
 
     // Mirror bookkeeping: the absolute dest paths we intend to keep.
     let mut wanted: BTreeSet<PathBuf> = BTreeSet::new();
+    // Fast-skip manifest: rel -> source size from the last sync. Skipping an
+    // unchanged track from the manifest avoids stat-ing its destination on the
+    // (often slow) device — the per-file stat is what made big re-syncs crawl.
+    // `next` accumulates what's on the device now and is written back at the end.
+    let prior = load_manifest(dest_root);
+    let mut next: HashMap<String, u64> = HashMap::with_capacity(files.len());
     let total = files.len();
     for (idx, f) in files.iter().enumerate() {
         let dest = dest_root.join(&f.rel);
         wanted.insert(dest.clone());
-        if up_to_date(&dest, f.size) {
+        // `||` short-circuits: a track the manifest already records at this exact
+        // size is skipped without ever touching the card; only manifest misses
+        // fall through to the (slower) on-device size check.
+        if prior.get(f.rel.as_str()).copied() == Some(f.size) || up_to_date(&dest, f.size) {
             result.skipped += 1;
+            next.insert(f.rel.clone(), f.size);
             on_progress(SyncStep {
                 phase: "copy".into(),
                 done: idx + 1,
@@ -291,6 +304,7 @@ pub fn sync(
             Ok(n) => {
                 result.copied += 1;
                 result.bytes_copied += n;
+                next.insert(f.rel.clone(), f.size);
                 ("copied", None)
             }
             Err(e) => {
@@ -342,6 +356,11 @@ pub fn sync(
         }
         prune_empty_dirs(dest_root);
     }
+
+    // Record what's on the device so the next re-sync can skip unchanged tracks
+    // without a per-file stat. Best-effort: a write failure only forfeits next
+    // time's fast path, so it's never counted as a sync error.
+    write_manifest(dest_root, next);
 
     result
 }
@@ -594,6 +613,39 @@ fn up_to_date(dest: &Path, size: u64) -> bool {
     std::fs::metadata(dest).map(|m| m.is_file() && m.len() == size).unwrap_or(false)
 }
 
+/// Name of the on-device sync manifest. Hidden (leading dot) so `is_hidden` keeps it out of
+/// the synced-track count and mirror mode never deletes it.
+const MANIFEST_NAME: &str = ".ghostwire-sync.json";
+
+/// On-device record of the last sync: each track's device-relative path → source byte size.
+/// A re-sync consults it to skip unchanged tracks without stat-ing every destination on the
+/// card (the per-file stat is what made big re-syncs slow). Versioned so the format can evolve.
+#[derive(Serialize, Deserialize, Default)]
+struct SyncManifest {
+    version: u32,
+    tracks: HashMap<String, u64>,
+}
+
+/// Read the device manifest (rel → size). A missing or unreadable/old-format manifest yields
+/// an empty map, so the first sync after this shipped simply falls back to per-file stats and
+/// then writes a manifest for next time.
+fn load_manifest(dest_root: &Path) -> HashMap<String, u64> {
+    std::fs::read(dest_root.join(MANIFEST_NAME))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<SyncManifest>(&b).ok())
+        .map(|m| m.tracks)
+        .unwrap_or_default()
+}
+
+/// Write the manifest describing what is now on the device. Best-effort: a failure only
+/// forfeits the next re-sync's fast path, so it is never surfaced as a sync error.
+fn write_manifest(dest_root: &Path, tracks: HashMap<String, u64>) {
+    let manifest = SyncManifest { version: 1, tracks };
+    if let Ok(bytes) = serde_json::to_vec(&manifest) {
+        let _ = std::fs::write(dest_root.join(MANIFEST_NAME), bytes);
+    }
+}
+
 fn copy_file(src: &Path, dest: &Path) -> Result<u64, String> {
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -700,6 +752,41 @@ mod tests {
         let r2 = sync(&files, &dev, false, |_| {});
         assert_eq!(r2.copied, 0);
         assert_eq!(r2.skipped, 1);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn manifest_skips_unchanged_without_restat_and_refreshes_on_change() {
+        use std::fs;
+        let base = std::env::temp_dir().join(format!("bp-devmanifest-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let lib = base.join("lib");
+        let dev = base.join("dev");
+        fs::create_dir_all(&lib).unwrap();
+        let song = lib.join("song.flac");
+        fs::write(&song, vec![0u8; 1024]).unwrap();
+        let files = vec![SyncFile { src: song.clone(), rel: "A/B/01 - Song.flac".into(), size: 1024 }];
+
+        // First sync copies the track AND drops a manifest next to it.
+        let r1 = sync(&files, &dev, false, |_| {});
+        assert_eq!(r1.copied, 1);
+        assert!(dev.join(MANIFEST_NAME).is_file(), "a manifest is written after a sync");
+
+        // The manifest is authoritative for skipping: delete the dest file but keep the
+        // manifest, and a re-sync still skips it (no per-file device stat) — proving the
+        // fast path no longer depends on touching the card for already-synced tracks.
+        fs::remove_file(dev.join("A/B/01 - Song.flac")).unwrap();
+        let r2 = sync(&files, &dev, false, |_| {});
+        assert_eq!(r2.skipped, 1);
+        assert_eq!(r2.copied, 0);
+
+        // A manifest entry whose recorded size no longer matches is NOT trusted: the size
+        // check fails, it falls through to the on-device stat, and (dest missing) re-copies.
+        fs::remove_file(dev.join("A/B/01 - Song.flac")).ok();
+        fs::write(dev.join(MANIFEST_NAME), br#"{"version":1,"tracks":{"A/B/01 - Song.flac":99}}"#).unwrap();
+        let r3 = sync(&files, &dev, false, |_| {});
+        assert_eq!(r3.copied, 1, "a stale-size manifest entry forces a re-copy");
+        assert!(dev.join("A/B/01 - Song.flac").is_file());
         let _ = fs::remove_dir_all(&base);
     }
 

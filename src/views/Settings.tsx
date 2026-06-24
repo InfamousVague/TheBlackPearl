@@ -105,7 +105,7 @@ export function Settings({ onCatalogChanged, tab, onRunPerfPass1, onRunPerfPass2
     appInfo().then(setInfo).catch(() => {});
     getSetting("tmdb_key").then((k) => setTmdbKey(k ?? "")).catch(() => {});
     getSetting("omdb_key").then((k) => setOmdbKey(k ?? "")).catch(() => {});
-    getSetting("auto_cleanup").then((v) => setAutoCleanup(v !== "false")).catch(() => {});
+    getSetting("auto_cleanup").then((v) => setAutoCleanup(v === "true")).catch(() => {});
     getSetting("player_ambient").then((v) => setAmbient(v !== "false")).catch(() => {});
     getSetting("prefer_p2p").then((v) => setPreferP2P(v === "true")).catch(() => {});
     getSetting("seed_updates")
@@ -407,8 +407,9 @@ export function Settings({ onCatalogChanged, tab, onRunPerfPass1, onRunPerfPass2
             onChange={(e: ChangeEvent<HTMLInputElement>) => void toggleAutoCleanup(e.currentTarget.checked)}
           />
           <p className="field-hint">
-            Finished downloads are auto-organized into clean library folders and enriched with posters, ratings, and cleaner titles.
-            It runs in the background; progress appears in the top bar.
+            Off by default — organize and clean your library manually from the Automation page. When enabled, finished
+            downloads are auto-organized into clean library folders and enriched with posters, ratings, and cleaner titles.
+            Leave this off if you download large/active torrents: moving files mid-transfer can interrupt a download.
           </p>
         </div>
       </Card>

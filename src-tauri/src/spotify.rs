@@ -1212,8 +1212,17 @@ pub async fn spotify_artist_albums(
     if artist_id.is_empty() {
         return Ok(Vec::new());
     }
-
     let (client, token) = spotify_app_access(&catalog).await?;
+    fetch_all_artist_albums(&client, &token, artist_id).await
+}
+
+/// Every album + single an artist released (paginated, deduped by name+year so cross-market and
+/// standard/deluxe re-releases don't multiply). Sorted newest-first.
+async fn fetch_all_artist_albums(
+    client: &reqwest::Client,
+    token: &str,
+    artist_id: &str,
+) -> Result<Vec<SpotifyAlbum>, String> {
     let mut url = format!(
         "https://api.spotify.com/v1/artists/{artist_id}/albums?include_groups=album,single&limit=50"
     );
@@ -1223,7 +1232,7 @@ pub async fn spotify_artist_albums(
     loop {
         let page: SpotifyArtistAlbumsResp = client
             .get(&url)
-            .bearer_auth(&token)
+            .bearer_auth(token)
             .send()
             .await
             .map_err(|e| e.to_string())?
@@ -1270,6 +1279,38 @@ pub async fn spotify_artist_albums(
     out.sort_by(|a, b| b.year.cmp(&a.year).then_with(|| a.name.cmp(&b.name)));
     Ok(out)
 }
+
+#[derive(Deserialize)]
+struct ArtistObj {
+    #[serde(default)]
+    name: String,
+}
+
+/// Resolve a Spotify ARTIST link to (artist name, full discography) for importing — the whole
+/// catalogue, not the ~10 top tracks the public embed exposes. Needs the Spotify API (Client ID /
+/// Secret in Settings); callers fall back to the single link when this errors.
+pub async fn artist_albums_for_import(
+    catalog: &Catalog,
+    artist_url: &str,
+) -> Result<(String, Vec<SpotifyAlbum>), String> {
+    let id = parse_artist_id(artist_url).ok_or("That doesn't look like a Spotify artist link.")?;
+    let (client, token) = spotify_app_access(catalog).await?;
+    let name = client
+        .get(format!("https://api.spotify.com/v1/artists/{id}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| format!("Spotify artist lookup failed: {e}"))?
+        .json::<ArtistObj>()
+        .await
+        .map(|a| a.name)
+        .unwrap_or_default();
+    let albums = fetch_all_artist_albums(&client, &token, &id).await?;
+    Ok((name, albums))
+}
+
 
 fn setting(catalog: &Catalog, key: &str) -> Option<String> {
     catalog.get_setting(key).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())

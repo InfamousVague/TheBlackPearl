@@ -3441,6 +3441,124 @@ where
     }
 }
 
+/// Parse a SpotiFLAC per-track header line into `(position, total, "<title> — <artists>")`.
+///
+/// SpotiFLAC prints `Track [<pos>/<total>] <title> — <artists> (<album>)` to stderr the instant it
+/// begins each track (see its `core/console.py::print_track_header`). That's our earliest reliable
+/// progress signal — it lands well before the finished file does. Non-matching lines (the verbose
+/// httpcore/httpx debug flood, `[SOURCE]` banners, summaries) return `None`.
+fn parse_spotiflac_track_header(line: &str) -> Option<(u32, u32, String)> {
+    let rest = line.strip_prefix("Track [")?;
+    let (frac, tail) = rest.split_once(']')?;
+    let (pos_s, total_s) = frac.split_once('/')?;
+    let position: u32 = pos_s.trim().parse().ok()?;
+    let total: u32 = total_s.trim().parse().ok()?;
+    // Drop the trailing " (album)" the header always appends so the card stays compact.
+    let mut label = tail.trim().to_string();
+    if label.ends_with(')') {
+        if let Some(idx) = label.rfind(" (") {
+            label.truncate(idx);
+        }
+    }
+    let label = label.trim().to_string();
+    if label.is_empty() {
+        return None;
+    }
+    Some((position, total, label))
+}
+
+/// Drain SpotiFLAC's stderr like `drain_import_lines` (rolling tail for error reporting) while also
+/// parsing each line for the per-track header, pushing live progress into the job: the current
+/// track label, the authoritative track total, and a leading completed count (track N starting
+/// means N-1 finished). This is what makes a slow download report progress promptly instead of
+/// sitting at 0 until the first file lands.
+async fn drain_import_progress<R>(
+    reader: R,
+    lines: Arc<tokio::sync::Mutex<Vec<String>>>,
+    manager: Arc<MusicImportManager>,
+    job_id: String,
+) where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    let mut reader = tokio::io::BufReader::new(reader).lines();
+    while let Ok(Some(line)) = reader.next_line().await {
+        let line = line.trim_end().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some((position, total, label)) = parse_spotiflac_track_header(&line) {
+            let mut changed = false;
+            {
+                let mut jobs = manager.jobs.lock().await;
+                if let Some(job) = jobs.iter_mut().find(|j| j.id == job_id) {
+                    if job.current_track.as_deref() != Some(label.as_str()) {
+                        job.current_track = Some(label.clone());
+                        changed = true;
+                    }
+                    if total > 0 && job.total != Some(total) {
+                        job.total = Some(total);
+                        changed = true;
+                    }
+                    let lead = position.saturating_sub(1);
+                    if lead > job.completed {
+                        job.completed = lead;
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                manager.request_flush();
+            }
+        }
+        let mut out = lines.lock().await;
+        out.push(line);
+        if out.len() > 240 {
+            let drop_n = out.len() - 240;
+            out.drain(0..drop_n);
+        }
+    }
+}
+
+#[cfg(test)]
+mod music_progress_tests {
+    use super::parse_spotiflac_track_header;
+
+    #[test]
+    fn parses_track_header() {
+        assert_eq!(
+            parse_spotiflac_track_header(
+                "Track [3/12] Bohemian Rhapsody — Queen (A Night at the Opera)"
+            ),
+            Some((3, 12, "Bohemian Rhapsody — Queen".to_string()))
+        );
+    }
+
+    #[test]
+    fn keeps_title_parentheses_drops_album() {
+        assert_eq!(
+            parse_spotiflac_track_header("Track [2/5] Song (Live) — Artist (Album)"),
+            Some((2, 5, "Song (Live) — Artist".to_string()))
+        );
+    }
+
+    #[test]
+    fn single_track() {
+        assert_eq!(
+            parse_spotiflac_track_header("Track [1/1] Solo — Artist (Single)"),
+            Some((1, 1, "Solo — Artist".to_string()))
+        );
+    }
+
+    #[test]
+    fn ignores_noise() {
+        assert!(
+            parse_spotiflac_track_header("DEBUG:httpcore.connection: connect_tcp.started").is_none()
+        );
+        assert!(parse_spotiflac_track_header("[SOURCE] TIDAL · hifi-api · LOSSLESS").is_none());
+        assert!(parse_spotiflac_track_header("Track [bad] x").is_none());
+    }
+}
+
 /// Probe a media file's duration in seconds via the bundled ffprobe. `None` when ffprobe is
 /// unavailable or the file can't be read.
 async fn probe_duration_secs(ffprobe: &Path, path: &Path) -> Option<f64> {
@@ -3551,32 +3669,31 @@ async fn run_music_import_job(
         let mut interval = tokio::time::interval(Duration::from_millis(800));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut last = u32::MAX;
-        let mut last_track: Option<String> = None;
         let mut last_progress = std::time::Instant::now();
         let mut kill_tx = Some(kill_tx);
         loop {
             tokio::select! {
                 _ = &mut stop_rx => break,
                 _ = interval.tick() => {
-                    let (count, track) = claim_new_music_files(
+                    // Finished-file count drives the accurate "done" total + the stall watchdog.
+                    // The live "now downloading" label and per-track count come from parsing
+                    // SpotiFLAC's stderr (drain_import_progress), which leads this by reacting the
+                    // instant a track starts instead of when its file lands.
+                    let (count, _track) = claim_new_music_files(
                         &progress_manager,
                         &progress_dir,
                         &progress_baseline,
                         &progress_files,
                     )
                     .await;
-                    if count != last || track != last_track {
-                        if count != last {
-                            last_progress = std::time::Instant::now();
-                        }
+                    if count != last {
+                        last_progress = std::time::Instant::now();
                         last = count;
-                        last_track = track.clone();
                         {
                             let mut jobs = progress_manager.jobs.lock().await;
                             if let Some(job) = jobs.iter_mut().find(|j| j.id == progress_id) {
-                                job.completed = count.max(job.completed);
-                                if track.is_some() {
-                                    job.current_track = track.clone();
+                                if count > job.completed {
+                                    job.completed = count;
                                 }
                             }
                         }
@@ -3612,10 +3729,27 @@ async fn run_music_import_job(
         let lines = stdout_lines.clone();
         tokio::spawn(async move { drain_import_lines(stdout, lines).await })
     });
+    // SpotiFLAC prints per-track headers to stderr the instant each track starts; parse them live so
+    // the card shows the current track and advances per track long before the file finishes writing.
     let stderr_task = child.stderr.take().map(|stderr| {
         let lines = stderr_lines.clone();
-        tokio::spawn(async move { drain_import_lines(stderr, lines).await })
+        let progress_manager = Arc::clone(manager);
+        let progress_id = id.to_string();
+        tokio::spawn(
+            async move { drain_import_progress(stderr, lines, progress_manager, progress_id).await },
+        )
     });
+    // Show immediate activity during SpotiFLAC's initial Spotify resolution (a few seconds of
+    // silence before the first track header) so the card never looks stalled.
+    {
+        let mut jobs = manager.jobs.lock().await;
+        if let Some(job) = jobs.iter_mut().find(|j| j.id == id) {
+            if job.current_track.is_none() {
+                job.current_track = Some("Preparing download…".to_string());
+            }
+        }
+    }
+    manager.request_flush();
 
     let mut stalled = false;
     let mut cancelled = false;
@@ -3855,6 +3989,74 @@ async fn music_import_enqueue(
         }
     }
     let kind = detect_music_import_kind(&url);
+
+    // A Spotify ARTIST link handed to SpotiFLAC as-is only yields the artist's ~10 top tracks (all
+    // the public embed exposes). Expand it into the artist's full discography — every album + single
+    // — and enqueue each release as its own job so the whole catalogue downloads. Needs the Spotify
+    // API (Client ID/Secret in Settings); on any failure we fall through and enqueue the single link.
+    if kind == "artist" {
+        if let Ok((artist_name, albums)) =
+            spotify::artist_albums_for_import(catalog.inner(), &url).await
+        {
+            if !albums.is_empty() {
+                let subtitle = if artist_name.trim().is_empty() {
+                    music_import_kind_label("album")
+                } else {
+                    artist_name.clone()
+                };
+                let mut first: Option<MusicImportJob> = None;
+                {
+                    let mut jobs = manager.jobs.lock().await;
+                    for album in &albums {
+                        if jobs.iter().any(|j| {
+                            j.url == album.url && (j.state == "queued" || j.state == "downloading")
+                        }) {
+                            continue;
+                        }
+                        let title = if album.name.trim().is_empty() {
+                            artist_name.clone()
+                        } else {
+                            album.name.clone()
+                        };
+                        let job = MusicImportJob {
+                            id: format!("import-{}", music_import_random_id()),
+                            url: album.url.clone(),
+                            kind: "album".to_string(),
+                            title,
+                            service: "youtube".to_string(),
+                            quality: "LOSSLESS".to_string(),
+                            total: (album.track_count > 0).then_some(album.track_count as u32),
+                            completed: 0,
+                            state: "queued".to_string(),
+                            error: None,
+                            created_at: now_unix_secs(),
+                            artwork_url: album.image.clone(),
+                            subtitle: Some(subtitle.clone()),
+                            current_track: None,
+                        };
+                        jobs.push(job.clone());
+                        if first.is_none() {
+                            first = Some(job);
+                        }
+                    }
+                }
+                if let Some(job) = first {
+                    manager.request_flush();
+                    manager.notify.notify_one();
+                    return Ok(job);
+                }
+                // Every album was already queued — hand back an existing match instead of a dupe.
+                let jobs = manager.jobs.lock().await;
+                if let Some(existing) =
+                    jobs.iter().find(|j| albums.iter().any(|a| a.url == j.url))
+                {
+                    return Ok(existing.clone());
+                }
+            }
+        }
+        // Fall through: enqueue the artist link itself (top-tracks fallback) when expansion failed.
+    }
+
     let (title, total, artwork_url) = music_import_preview(catalog.inner(), &url, kind).await;
     let job = MusicImportJob {
         id: format!("import-{}", music_import_random_id()),
