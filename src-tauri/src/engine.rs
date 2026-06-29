@@ -354,10 +354,15 @@ impl Engine {
                 persistence: Some(SessionPersistenceConfig::Json {
                     folder: Some(PathBuf::from(&app_info.data_dir).join("rqbit-session")),
                 }),
-                // Restore fastresume state so a resumed download doesn't re-hash every existing
-                // piece on launch (the persistence comment above always claimed this, but the
-                // flag was never set — relaunches were silently re-checking whole files).
-                fastresume: true,
+                // fastresume MUST stay off. With JSON persistence, enabling it makes librqbit use
+                // the JSON store itself as the bitfield factory, whose `store_initial_check` writes
+                // a `<infohash>.bitv` file and mmaps it — and that step fails on every add with
+                // "error storing initial check bitfield" (librqbit 8.1.1 initializing.rs:214),
+                // which aborts the torrent so nothing streams or downloads. With it off, librqbit
+                // uses NonPersistentBitVFactory (store_initial_check is infallible). The only cost
+                // is re-hashing existing pieces on relaunch — the prior, working behaviour. The
+                // torrent LIST still resumes via the JSON `persistence` above; just not fastresume.
+                fastresume: false,
                 // Make the node connectable instead of passive/firewalled, so peers can dial in
                 // and swarms fill faster. Pointless on iOS (no LAN UPnP gateway in practice).
                 enable_upnp_port_forwarding: !cfg!(target_os = "ios"),
